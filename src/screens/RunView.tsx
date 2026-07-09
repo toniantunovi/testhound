@@ -1,10 +1,18 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, FileArchive, Loader2, Play } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  FileArchive,
+  Loader2,
+  Play,
+  Stethoscope,
+} from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
+import { TriageModal } from "@/screens/TriageModal";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import {
   AutomationBadge,
@@ -29,6 +37,9 @@ export function RunView() {
   const navigate = useSession((s) => s.navigate);
   const runningRunId = useActivity((s) => s.runningRunId);
   const qc = useQueryClient();
+  const [triage, setTriage] = useState<{ caseId: string; title: string } | null>(
+    null,
+  );
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -195,11 +206,23 @@ export function RunView() {
                     comment,
                   })
                 }
+                onTriage={() =>
+                  setTriage({ caseId: row.case, title: row.title })
+                }
               />
             ))}
           </tbody>
         </table>
       </div>
+
+      {triage && (
+        <TriageModal
+          runId={run.id}
+          caseId={triage.caseId}
+          caseTitle={triage.title}
+          onClose={() => setTriage(null)}
+        />
+      )}
     </div>
   );
 }
@@ -209,11 +232,13 @@ function CaseRow({
   pending,
   onSetStatus,
   onSetComment,
+  onTriage,
 }: {
   row: RunResultRow;
   pending: boolean;
   onSetStatus: (status: ResultStatus) => void;
   onSetComment: (comment: string) => void;
+  onTriage: () => void;
 }) {
   const [comment, setComment] = useState(row.comment ?? "");
   useEffect(() => setComment(row.comment ?? ""), [row.comment]);
@@ -283,6 +308,15 @@ function CaseRow({
               );
             })}
           </div>
+        )}
+        {row.status === "failed" && (
+          <button
+            onClick={onTriage}
+            title="Ask an agent to classify this failure and suggest a fix"
+            className="mt-1.5 inline-flex items-center gap-1 rounded-control border border-border-subtle px-1.5 py-0.5 text-[11px] text-text-secondary hover:border-brand-accent/50 hover:text-brand-accent"
+          >
+            <Stethoscope size={11} /> Triage with agent
+          </button>
         )}
       </td>
       <td className="py-3">

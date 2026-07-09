@@ -16,6 +16,7 @@ import type {
   TestCase,
 } from "@/lib/types";
 import { useSession } from "@/store/session";
+import { useAgentDrawer } from "@/store/agent";
 import { AutomationBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
 export function CaseEditor() {
   const id = useSession((s) => s.openCaseId);
   const navigate = useSession((s) => s.navigate);
+  const openDrawer = useAgentDrawer((s) => s.open);
   const qc = useQueryClient();
 
   const { data: loaded } = useQuery({
@@ -253,6 +255,13 @@ export function CaseEditor() {
                 draft.automation.state === "drifted" &&
                   "border-status-drifted/40 text-status-drifted",
               )}
+              onClick={() =>
+                openDrawer({
+                  caseId: draft.id,
+                  caseTitle: draft.title,
+                  update: draft.automation.state === "drifted",
+                })
+              }
             >
               <Sparkles size={13} className="text-brand-accent" />
               {draft.automation.state === "none"

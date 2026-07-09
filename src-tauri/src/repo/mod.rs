@@ -292,7 +292,12 @@ pub fn save_case(paths: &Paths, case: &TestCase) -> Result<TestCase> {
         cases_dir.join(format!("{}-{}.md", case.front.id, slug))
     });
 
-    let serialized = case_file::serialize(case)?;
+    // Refresh drift state from the body before writing, so editing a linked
+    // case flips its badge to "drifted" the moment it diverges from its spec.
+    let mut case = case.clone();
+    case_file::apply_drift(&mut case.front, &case.body);
+
+    let serialized = case_file::serialize(&case)?;
     fs::write(&path, serialized)?;
 
     // Reparse from disk so derived fields (steps) reflect what was written.

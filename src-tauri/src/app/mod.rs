@@ -2,6 +2,11 @@
 
 pub mod sample;
 
+use crate::automation::{
+    self,
+    agent::{self, AgentAvailability, AgentKind, Mode},
+    Coverage, RepoContext,
+};
 use crate::error::{Error, Result};
 use crate::git;
 use crate::playwright::{self, PlaywrightInfo};
@@ -431,6 +436,231 @@ pub fn run_playwright(run_id: String, app: AppHandle, state: tauri::State<AppSta
 #[tauri::command]
 pub fn open_trace(path: String, state: tauri::State<AppState>) -> Result<()> {
     playwright::show_trace(&state.paths()?, &path)
+}
+
+// ---- AI automation (docs/05-ai-automation.md, roadmap M4) ---------------------
+
+/// Which coding agents (Claude Code / Codex) are installed on PATH.
+#[tauri::command]
+pub fn list_agents() -> Vec<AgentAvailability> {
+    agent::detect_agents()
+}
+
+/// The coverage & linking view: every case's automation state, orphan specs,
+/// and roll-up metrics.
+#[tauri::command]
+pub fn coverage(state: tauri::State<AppState>) -> Result<Coverage> {
+    automation::coverage(&state.paths()?)
+}
+
+/// The repo context TestHound would feed an agent when generating a case's spec.
+#[tauri::command]
+pub fn automation_context(id: String, state: tauri::State<AppState>) -> Result<RepoContext> {
+    let paths = state.paths()?;
+    let case = repo::load_case(&paths, &id)?;
+    Ok(automation::detect_context(&paths, &case))
+}
+
+/// A file's working-tree contents alongside its committed version, for the
+/// generated-spec diff view.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileDiff {
+    pub path: String,
+    pub old: Option<String>,
+    pub new_content: String,
+    pub is_new: bool,
+}
+
+#[tauri::command]
+pub fn file_diff(path: String, state: tauri::State<AppState>) -> Result<FileDiff> {
+    let paths = state.paths()?;
+    let repo = git::open(&paths.root)?;
+    let old = git::read_head_file(&repo, &path);
+    let new_content = std::fs::read_to_string(paths.root.join(&path)).unwrap_or_default();
+    Ok(FileDiff {
+        is_new: old.is_none(),
+        old,
+        path,
+        new_content,
+    })
+}
+
+/// Link accepted specs to a case (front matter + `links.yml`).
+#[tauri::command]
+pub fn accept_generation(
+    case_id: String,
+    specs: Vec<String>,
+    generator: String,
+    state: tauri::State<AppState>,
+) -> Result<TestCase> {
+    automation::accept_generation(&state.paths()?, &case_id, specs, &generator)
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentStartedEvent {
+    id: String,
+    kind: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentLogEvent {
+    id: String,
+    line: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentFinishedEvent {
+    id: String,
+    kind: String,
+    /// For generate/update: spec files the agent created or modified.
+    changed_specs: Vec<String>,
+    /// For triage: the agent's classification + suggestion text.
+    output: Option<String>,
+    error: Option<String>,
+}
+
+/// Generate (or update) a Playwright spec for a case with a coding agent. Runs
+/// on a background thread, streaming `agent://*` events; the agent writes files
+/// directly and TestHound reports which specs changed for the user to review
+/// and accept. Never auto-commits or auto-links (docs/05 §5.1-5.3).
+#[tauri::command]
+pub fn generate_spec(
+    case_id: String,
+    agent_id: String,
+    update: bool,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let kind = AgentKind::from_id(&agent_id)
+        .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
+    let case = repo::load_case(&paths, &case_id)?;
+    let ctx = automation::detect_context(&paths, &case);
+    let prompt = if update {
+        automation::update_prompt(&case, &ctx)
+    } else {
+        automation::generate_prompt(&case, &ctx)
+    };
+    let kind_label = if update { "update" } else { "generate" };
+
+    let _ = app.emit(
+        "agent://started",
+        AgentStartedEvent {
+            id: case_id.clone(),
+            kind: kind_label.to_string(),
+        },
+    );
+
+    // Snapshot the specs on disk so we can report what the agent touched.
+    let before = automation::snapshot_specs(&paths);
+
+    std::thread::spawn(move || {
+        let log_app = app.clone();
+        let log_id = case_id.clone();
+        let result = agent::run(&paths.root, kind, Mode::Edit, &prompt, |line| {
+            let _ = log_app.emit(
+                "agent://log",
+                AgentLogEvent {
+                    id: log_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        });
+
+        let finished = match result {
+            Ok(_) => {
+                let changed = automation::changed_since(&paths, &before);
+                AgentFinishedEvent {
+                    id: case_id.clone(),
+                    kind: kind_label.to_string(),
+                    changed_specs: changed,
+                    output: None,
+                    error: None,
+                }
+            }
+            Err(e) => AgentFinishedEvent {
+                id: case_id.clone(),
+                kind: kind_label.to_string(),
+                changed_specs: vec![],
+                output: None,
+                error: Some(e.to_string()),
+            },
+        };
+        let _ = app.emit("agent://finished", finished);
+    });
+    Ok(())
+}
+
+/// Agent-assisted failure triage for a failed automated result (docs/05 §5.6).
+/// Read-only: the agent classifies and suggests; nothing is written or
+/// committed. Streams `agent://*` events keyed by `<run_id>:<case_id>`.
+#[tauri::command]
+pub fn triage_failure(
+    run_id: String,
+    case_id: String,
+    agent_id: String,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let kind = AgentKind::from_id(&agent_id)
+        .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
+    let detail = runs::load_run(&paths, &run_id)?;
+    let error = detail
+        .rows
+        .iter()
+        .find(|r| r.case == case_id)
+        .and_then(|r| r.comment.clone())
+        .filter(|c| !c.trim().is_empty())
+        .unwrap_or_else(|| "No error message was recorded for this failure.".to_string());
+    let case = repo::load_case(&paths, &case_id)?;
+    let specs = case.front.automation.specs.clone();
+    let prompt = automation::triage_prompt(&case, &error, &specs);
+    let id = format!("{run_id}:{case_id}");
+
+    let _ = app.emit(
+        "agent://started",
+        AgentStartedEvent {
+            id: id.clone(),
+            kind: "triage".to_string(),
+        },
+    );
+
+    std::thread::spawn(move || {
+        let log_app = app.clone();
+        let log_id = id.clone();
+        let result = agent::run(&paths.root, kind, Mode::ReadOnly, &prompt, |line| {
+            let _ = log_app.emit(
+                "agent://log",
+                AgentLogEvent {
+                    id: log_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        });
+        let finished = match result {
+            Ok(output) => AgentFinishedEvent {
+                id: id.clone(),
+                kind: "triage".to_string(),
+                changed_specs: vec![],
+                output: Some(output),
+                error: None,
+            },
+            Err(e) => AgentFinishedEvent {
+                id: id.clone(),
+                kind: "triage".to_string(),
+                changed_specs: vec![],
+                output: None,
+                error: Some(e.to_string()),
+            },
+        };
+        let _ = app.emit("agent://finished", finished);
+    });
+    Ok(())
 }
 
 /// Aggregate dashboard KPIs derived from the file store (cheap, on demand).

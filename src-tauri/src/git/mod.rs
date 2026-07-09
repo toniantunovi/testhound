@@ -159,6 +159,17 @@ pub fn checkout_branch(repo: &Repository, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Read a repo-relative file's contents as of `HEAD`, or `None` if the path is
+/// untracked (new file) or HEAD has no commit yet. Used to diff a generated or
+/// edited spec against its committed version.
+pub fn read_head_file(repo: &Repository, rel: &str) -> Option<String> {
+    let tree = repo.head().ok()?.peel_to_tree().ok()?;
+    let entry = tree.get_path(Path::new(rel)).ok()?;
+    let object = entry.to_object(repo).ok()?;
+    let blob = object.as_blob()?;
+    Some(String::from_utf8_lossy(blob.content()).to_string())
+}
+
 /// Clone via the `git` binary to reuse the user's credential helpers.
 pub fn clone(url: &str, dest: &Path) -> Result<()> {
     let out = Command::new("git")

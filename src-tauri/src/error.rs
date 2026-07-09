@@ -37,6 +37,9 @@ pub enum Error {
     #[error("playwright error: {0}")]
     Playwright(String),
 
+    #[error("agent error: {0}")]
+    Agent(String),
+
     #[error("{0}")]
     Other(String),
 }

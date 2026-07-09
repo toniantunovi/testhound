@@ -2,14 +2,21 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AgentAvailability,
+  AgentFinishedEvent,
+  AgentLogEvent,
+  AgentStartedEvent,
   CaseSummary,
   Configuration,
+  Coverage,
   Dashboard,
+  FileDiff,
   GitStatus,
   IncludeMode,
   Milestone,
   PlaywrightInfo,
   ProjectInfo,
+  RepoContext,
   RepoInfo,
   ResultStatus,
   Run,
@@ -89,6 +96,19 @@ export const api = {
   playwrightInfo: () => invoke<PlaywrightInfo>("playwright_info"),
   runPlaywright: (runId: string) => invoke<void>("run_playwright", { runId }),
   openTrace: (path: string) => invoke<void>("open_trace", { path }),
+
+  // AI automation (M4)
+  listAgents: () => invoke<AgentAvailability[]>("list_agents"),
+  coverage: () => invoke<Coverage>("coverage"),
+  automationContext: (id: string) =>
+    invoke<RepoContext>("automation_context", { id }),
+  fileDiff: (path: string) => invoke<FileDiff>("file_diff", { path }),
+  generateSpec: (caseId: string, agentId: string, update: boolean) =>
+    invoke<void>("generate_spec", { caseId, agentId, update }),
+  acceptGeneration: (caseId: string, specs: string[], generator: string) =>
+    invoke<TestCase>("accept_generation", { caseId, specs, generator }),
+  triageFailure: (runId: string, caseId: string, agentId: string) =>
+    invoke<void>("triage_failure", { runId, caseId, agentId }),
 };
 
 // ---- Playwright run lifecycle events -----------------------------------------
@@ -103,6 +123,20 @@ export const runEvents = {
     listen<RunProgressEvent>("run://progress", (e) => cb(e.payload)),
   onFinished: (cb: (e: RunFinishedEvent) => void): Promise<UnlistenFn> =>
     listen<RunFinishedEvent>("run://finished", (e) => cb(e.payload)),
+};
+
+// ---- Agent lifecycle events --------------------------------------------------
+// Emitted while a spec generation/update or a failure triage runs. Every event
+// carries an `id` (the case id, or `<runId>:<caseId>` for triage) so a screen
+// can subscribe to just its own agent activity.
+
+export const agentEvents = {
+  onStarted: (cb: (e: AgentStartedEvent) => void): Promise<UnlistenFn> =>
+    listen<AgentStartedEvent>("agent://started", (e) => cb(e.payload)),
+  onLog: (cb: (e: AgentLogEvent) => void): Promise<UnlistenFn> =>
+    listen<AgentLogEvent>("agent://log", (e) => cb(e.payload)),
+  onFinished: (cb: (e: AgentFinishedEvent) => void): Promise<UnlistenFn> =>
+    listen<AgentFinishedEvent>("agent://finished", (e) => cb(e.payload)),
 };
 
 /** Normalize an IPC error (a plain string from the Rust side) to a message. */

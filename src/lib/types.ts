@@ -264,6 +264,77 @@ export interface RunFinishedEvent {
   error: string | null;
 }
 
+// ---- AI automation (M4) ------------------------------------------------------
+
+export interface AgentAvailability {
+  id: string;
+  name: string;
+  command: string;
+  available: boolean;
+}
+
+export interface RepoContext {
+  config: string | null;
+  testsDir: string;
+  baseUrl: string | null;
+  nearbySpecs: string[];
+  targetPath: string;
+}
+
+export interface CoverageRow {
+  case: string;
+  title: string;
+  suite: string;
+  priority: Priority;
+  status: CaseStatus;
+  state: AutomationState;
+  specs: string[];
+}
+
+export interface SuiteCoverage {
+  id: string;
+  name: string;
+  active: number;
+  automated: number;
+}
+
+export interface Coverage {
+  rows: CoverageRow[];
+  orphans: string[];
+  totalActive: number;
+  automated: number;
+  drifted: number;
+  p1Unautomated: number;
+  coveragePct: number;
+  perSuite: SuiteCoverage[];
+}
+
+export interface FileDiff {
+  path: string;
+  old: string | null;
+  newContent: string;
+  isNew: boolean;
+}
+
+/** kind is "generate" | "update" | "triage". */
+export interface AgentStartedEvent {
+  id: string;
+  kind: string;
+}
+
+export interface AgentLogEvent {
+  id: string;
+  line: string;
+}
+
+export interface AgentFinishedEvent {
+  id: string;
+  kind: string;
+  changedSpecs: string[];
+  output: string | null;
+  error: string | null;
+}
+
 export interface Dashboard {
   activeCases: number;
   totalCases: number;

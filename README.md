@@ -13,7 +13,7 @@ TestHound is a TestRails alternative built as a Tauri desktop app. It stores eve
 
 ## Status
 
-Milestones **M0 (Foundations)**, the core of **M1 (Git-native test management)**, **M2 (Runs & results)**, and **M3 (Playwright execution)** are implemented: the Tauri v2 app scaffolds/opens a `testhound/` repo, reads and writes the file format, and ships the app shell, Dashboard, Test Cases list, and Test Case editor. M2 adds runs (built from a suite, a filter query, or a hand-picked set), manual result recording with per-case history, milestones and configurations, and a dashboard wired to real run data. M3 detects the project's Playwright install, runs the specs linked to a run's cases (`--grep` by test title, `--project` per configuration), streams live output to the Activity console, parses the JSON reporter, and ingests results as automated outcomes with elapsed times and evidence, including "Open trace" in the trace viewer.
+Milestones **M0 (Foundations)**, the core of **M1 (Git-native test management)**, **M2 (Runs & results)**, **M3 (Playwright execution)**, and **M4 (AI automation)** are implemented: the Tauri v2 app scaffolds/opens a `testhound/` repo, reads and writes the file format, and ships the app shell, Dashboard, Test Cases list, and Test Case editor. M2 adds runs (built from a suite, a filter query, or a hand-picked set), manual result recording with per-case history, milestones and configurations, and a dashboard wired to real run data. M3 detects the project's Playwright install, runs the specs linked to a run's cases (`--grep` by test title, `--project` per configuration), streams live output to the Activity console, parses the JSON reporter, and ingests results as automated outcomes with elapsed times and evidence, including "Open trace" in the trace viewer. M4 adds the agent runner (Claude Code and Codex, invoked headless with a tests-scoped write allow-list): generate or update a Playwright spec from a manual case, review the result in a diff and accept it to link the spec (front matter + `automation/links.yml`), automatic drift detection on every case edit, a Coverage view (per-case automation state, orphan specs, and metrics), and agent-assisted failure triage on failed automated results.
 
 ## Running
 
@@ -34,7 +34,7 @@ On first launch, the onboarding screen connects a local Git repo. If it has no `
 
 ## Architecture
 
-- **`src-tauri/`** – Rust core. Layered as `domain` (pure types + step parsing), `repo` (on-disk serialization, scaffolding), `git` (status/branch via `git2`), `playwright` (spec planning, JSON-report parsing, result ingestion, execution), and `app` (Tauri commands + state). See `docs/02-architecture.md`.
+- **`src-tauri/`** – Rust core. Layered as `domain` (pure types + step parsing), `repo` (on-disk serialization, scaffolding, drift), `git` (status/branch via `git2`), `playwright` (spec planning, JSON-report parsing, result ingestion, execution), `automation` (agent runner, prompt building, `links.yml`, coverage, accept flow), and `app` (Tauri commands + state). See `docs/02-architecture.md`.
 - **`src/`** – React + TypeScript frontend (Vite, Tailwind with the design tokens, TanStack Query over IPC, Zustand session state).
 
 ## Documentation

@@ -3,6 +3,7 @@
 //! (Tauri command handlers + state).
 
 pub mod app;
+pub mod automation;
 pub mod domain;
 pub mod error;
 pub mod git;
@@ -42,6 +43,13 @@ pub fn run() {
             app::playwright_info,
             app::run_playwright,
             app::open_trace,
+            app::list_agents,
+            app::coverage,
+            app::automation_context,
+            app::file_diff,
+            app::accept_generation,
+            app::generate_spec,
+            app::triage_failure,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TestHound");

@@ -1,7 +1,7 @@
 //! Parsing and serialization of a single test case file: YAML front matter
 //! delimited by `---`, followed by a Markdown body.
 
-use crate::domain::{parse_body, FrontMatter, TestCase};
+use crate::domain::{parse_body, AutomationState, FrontMatter, TestCase};
 use crate::error::{Error, Result};
 use sha2::{Digest, Sha256};
 
@@ -58,6 +58,28 @@ pub fn content_hash(body: &str) -> String {
     hasher.update(body.trim().as_bytes());
     let digest = hasher.finalize();
     hex6(&digest)
+}
+
+/// Recompute a case's automation link state from its body (docs/05 §5.3). A
+/// `linked` or `drifted` case whose body no longer matches the recorded
+/// `source_hash` becomes `drifted`; one whose body matches again returns to
+/// `linked`. Cases with no link, or mid-generation, are left untouched. Called
+/// on every save so editing a linked case surfaces drift immediately.
+pub fn apply_drift(front: &mut FrontMatter, body: &str) {
+    if !matches!(
+        front.automation.state,
+        AutomationState::Linked | AutomationState::Drifted
+    ) {
+        return;
+    }
+    let Some(recorded) = front.automation.source_hash.as_deref() else {
+        return;
+    };
+    front.automation.state = if content_hash(body) == recorded {
+        AutomationState::Linked
+    } else {
+        AutomationState::Drifted
+    };
 }
 
 fn hex6(bytes: &[u8]) -> String {
