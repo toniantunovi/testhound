@@ -22,7 +22,9 @@ tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-git2 = "0.20"
+# default-features off: ssh/https transports pull in OpenSSL, but all network
+# git operations shell out to the `git` binary (see src/git/mod.rs)
+git2 = { version = "0.20", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 walkdir = "2"
