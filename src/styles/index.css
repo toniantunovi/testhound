@@ -1,0 +1,70 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-bg-base text-text-primary font-sans antialiased;
+    font-size: 14px;
+    margin: 0;
+    overflow: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Inputs and editable areas can select text. */
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable {
+    user-select: text;
+  }
+
+  ::selection {
+    background: rgba(110, 139, 255, 0.35);
+  }
+
+  /* Compact, dark scrollbars matching the developer-tool aesthetic. */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #262b33;
+    border-radius: 6px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #333a44;
+    background-clip: content-box;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #0b0d10, 0 0 0 4px #6e8bff;
+    border-radius: 6px;
+  }
+}
+
+@layer components {
+  .th-drag {
+    -webkit-app-region: drag;
+  }
+  .th-no-drag {
+    -webkit-app-region: no-drag;
+  }
+}

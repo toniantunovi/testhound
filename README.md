@@ -13,7 +13,29 @@ TestHound is a TestRails alternative built as a Tauri desktop app. It stores eve
 
 ## Status
 
-Specification and design phase. No implementation code yet.
+Milestones **M0 (Foundations)**, the core of **M1 (Git-native test management)**, and **M2 (Runs & results)** are implemented: the Tauri v2 app scaffolds/opens a `testhound/` repo, reads and writes the file format, and ships the app shell, Dashboard, Test Cases list, and Test Case editor. M2 adds runs (built from a suite, a filter query, or a hand-picked set), manual result recording with per-case history, milestones and configurations, and a dashboard wired to real run data.
+
+## Running
+
+```bash
+pnpm install
+pnpm app:dev      # launch the desktop app (Vite + Tauri)
+```
+
+Other scripts:
+
+```bash
+pnpm build                       # typecheck + build the frontend
+pnpm app:build                   # build a distributable desktop bundle
+(cd src-tauri && cargo test)     # Rust unit + integration tests
+```
+
+On first launch, the onboarding screen connects a local Git repo. If it has no `testhound/` directory, TestHound scaffolds one; check "Seed with sample data" to load the Acme Shop demo used in the Figma design.
+
+## Architecture
+
+- **`src-tauri/`** – Rust core. Layered as `domain` (pure types + step parsing), `repo` (on-disk serialization, scaffolding), `git` (status/branch via `git2`), and `app` (Tauri commands + state). See `docs/02-architecture.md`.
+- **`src/`** – React + TypeScript frontend (Vite, Tailwind with the design tokens, TanStack Query over IPC, Zustand session state).
 
 ## Documentation
 

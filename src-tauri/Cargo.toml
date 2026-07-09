@@ -1,0 +1,41 @@
+[package]
+name = "testhound"
+version = "0.1.0"
+description = "A Git-native, AI-powered test management desktop app"
+authors = ["TestHound"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+# The Tauri app is exposed as a library so both the desktop binary and
+# integration tests can drive the same core.
+name = "testhound_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+git2 = "0.20"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+walkdir = "2"
+sha2 = "0.10"
+slug = "0.1"
+
+[features]
+# This feature is used for production builds or when a dev server is not specified,
+# DO NOT REMOVE!!
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
