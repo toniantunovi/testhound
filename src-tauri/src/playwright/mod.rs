@@ -50,6 +50,60 @@ pub fn detect(repo_root: &Path) -> PlaywrightInfo {
     }
 }
 
+// ---- test target (where runs point) -------------------------------------------
+
+/// Per-developer configuration of where Playwright runs are directed: the base
+/// URL/host and any extra environment variables. Stored under the gitignored
+/// `.testhound/` cache so it stays local (it may point at a personal
+/// environment or hold secrets) rather than being committed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+fn target_path(paths: &Paths) -> PathBuf {
+    paths.th.join(".testhound").join("target.yml")
+}
+
+/// Load the configured test target, or defaults if none has been saved.
+pub fn load_target(paths: &Paths) -> TestTarget {
+    let path = target_path(paths);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_yaml::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Persist the test target to the local (gitignored) cache.
+pub fn save_target(paths: &Paths, target: &TestTarget) -> Result<()> {
+    let path = target_path(paths);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_yaml::to_string(target)?)?;
+    Ok(())
+}
+
+/// The environment variables a target contributes to a Playwright run. The base
+/// URL is exposed under the common names a `playwright.config` might read
+/// (`process.env.BASE_URL` etc.); custom vars are passed through verbatim.
+pub fn target_env(target: &TestTarget) -> Vec<(String, String)> {
+    let mut env = Vec::new();
+    if let Some(url) = target.base_url.as_deref().map(str::trim).filter(|u| !u.is_empty()) {
+        for key in ["BASE_URL", "PLAYWRIGHT_TEST_BASE_URL", "PLAYWRIGHT_BASE_URL"] {
+            env.push((key.to_string(), url.to_string()));
+        }
+    }
+    for (k, v) in &target.env {
+        env.push((k.clone(), v.clone()));
+    }
+    env
+}
+
 fn local_binary(repo_root: &Path) -> Option<PathBuf> {
     let bin = repo_root.join("node_modules").join(".bin").join("playwright");
     bin.is_file().then_some(bin)
@@ -516,7 +570,7 @@ fn report_path(paths: &Paths, run_id: &str) -> PathBuf {
 
 /// Build the `playwright test` argument vector (after the program + leading
 /// args from [`runner`]). Kept pure for testing.
-pub fn build_args(plan: &RunPlan, run: &Run) -> Vec<String> {
+pub fn build_args(plan: &RunPlan, run: &Run, headed: bool) -> Vec<String> {
     let mut args = vec!["test".to_string()];
     args.extend(plan.files.iter().cloned());
     if !plan.greps.is_empty() {
@@ -531,6 +585,12 @@ pub fn build_args(plan: &RunPlan, run: &Run) -> Vec<String> {
     }
     for cfg in &run.configuration {
         args.push(format!("--project={cfg}"));
+    }
+    // Headed: show a real browser and run serially so it is watchable rather
+    // than flashing many parallel windows.
+    if headed {
+        args.push("--headed".to_string());
+        args.push("--workers=1".to_string());
     }
     args.push("--reporter=line,json".to_string());
     args
@@ -579,6 +639,7 @@ pub fn execute<F: FnMut(&str)>(
     paths: &Paths,
     run: &Run,
     by: Option<&str>,
+    headed: bool,
     mut on_line: F,
 ) -> Result<Summary> {
     let pw = detect(&paths.root);
@@ -606,7 +667,12 @@ pub fn execute<F: FnMut(&str)>(
     let _ = std::fs::remove_file(&report);
 
     let (program, lead) = runner(&paths.root);
-    let args = build_args(&plan, run);
+    let args = build_args(&plan, run, headed);
+    let target = load_target(paths);
+    let target_env = target_env(&target);
+    if let Some(url) = target.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        on_line(&format!("Target base URL: {url}"));
+    }
     on_line(&format!("$ {program} {} {}", lead.join(" "), args.join(" ")));
 
     // Capture the JSON reporter to a file (via env), stream the line reporter
@@ -620,6 +686,7 @@ pub fn execute<F: FnMut(&str)>(
         .current_dir(&paths.root)
         .env("PLAYWRIGHT_JSON_OUTPUT_NAME", &report)
         .env("FORCE_COLOR", "0")
+        .envs(target_env)
         .stdout(Stdio::piped())
         .stderr(Stdio::from(stderr_file))
         .spawn()
@@ -652,6 +719,95 @@ pub fn execute<F: FnMut(&str)>(
     })?;
     let reported = parse_report(&json)?;
     ingest(paths, &run.id, &plan, &reported, by)
+}
+
+/// Run a single case's linked spec(s) directly and stream the output, WITHOUT
+/// creating a run or ingesting results. This is the "watch it in action"
+/// preview: nothing is persisted. Test failures are not an error here (the user
+/// watched them); only a failure to launch Playwright is.
+pub fn run_spec_preview<F: FnMut(&str)>(
+    paths: &Paths,
+    specs: &[String],
+    headed: bool,
+    mut on_line: F,
+) -> Result<()> {
+    if !detect(&paths.root).detected {
+        return Err(Error::Playwright(
+            "no playwright.config found in the repo root".into(),
+        ));
+    }
+    let refs: Vec<SpecRef> = specs.iter().map(|s| parse_spec_ref(s)).collect();
+    let files: BTreeSet<String> = refs.iter().map(|r| r.file.clone()).collect();
+    if files.is_empty() {
+        return Err(Error::Playwright(
+            "this case has no linked spec to run".into(),
+        ));
+    }
+    let greps: Vec<String> = refs.iter().filter_map(|r| r.test.clone()).collect();
+
+    let mut args = vec!["test".to_string()];
+    args.extend(files.iter().cloned());
+    if !greps.is_empty() {
+        let pattern = greps
+            .iter()
+            .map(|t| format!("({})", regex_escape(t)))
+            .collect::<Vec<_>>()
+            .join("|");
+        args.push("--grep".to_string());
+        args.push(pattern);
+    }
+    if headed {
+        args.push("--headed".to_string());
+        args.push("--workers=1".to_string());
+    }
+    args.push("--reporter=line".to_string());
+
+    let (program, lead) = runner(&paths.root);
+    let target = load_target(paths);
+    let env = target_env(&target);
+    if let Some(url) = target.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
+        on_line(&format!("Target base URL: {url}"));
+    }
+    on_line(&format!("$ {program} {} {}", lead.join(" "), args.join(" ")));
+
+    let mut child = Command::new(&program)
+        .args(&lead)
+        .args(&args)
+        .current_dir(&paths.root)
+        .env("FORCE_COLOR", "0")
+        .envs(env)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| Error::Playwright(format!("failed to launch {program}: {e}")))?;
+
+    let stderr = child.stderr.take();
+    let stderr_handle = stderr.map(|err| {
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            BufReader::new(err)
+                .lines()
+                .map_while(std::result::Result::ok)
+                .collect::<Vec<_>>()
+        })
+    });
+    use std::io::{BufRead, BufReader};
+    if let Some(out) = child.stdout.take() {
+        for line in BufReader::new(out).lines().map_while(std::result::Result::ok) {
+            on_line(&line);
+        }
+    }
+    // A non-zero exit just means the test failed; the user watched it, so this
+    // is not a command error. Surface stderr for context.
+    let _ = child.wait();
+    if let Some(handle) = stderr_handle {
+        if let Ok(lines) = handle.join() {
+            for line in lines.iter().filter(|l| !l.trim().is_empty()) {
+                on_line(line);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Open a trace in the Playwright trace viewer (`playwright show-trace`). The
@@ -763,12 +919,38 @@ mod tests {
             created: None,
             updated: None,
         };
-        let args = build_args(&plan, &run);
+        let args = build_args(&plan, &run, false);
         assert!(args.contains(&"tests/a.spec.ts".to_string()));
+        assert!(!args.contains(&"--headed".to_string()));
+        // Headed adds --headed and forces a single worker so it is watchable.
+        let headed = build_args(&plan, &run, true);
+        assert!(headed.contains(&"--headed".to_string()));
+        assert!(headed.contains(&"--workers=1".to_string()));
         let gi = args.iter().position(|a| a == "--grep").unwrap();
         assert_eq!(args[gi + 1], "(a \\(b\\))");
         assert!(args.contains(&"--project=chromium-desktop".to_string()));
         assert!(args.contains(&"--reporter=line,json".to_string()));
+    }
+
+    #[test]
+    fn target_env_exposes_base_url_and_custom_vars() {
+        let mut target = TestTarget {
+            base_url: Some("https://staging.example.com".into()),
+            ..Default::default()
+        };
+        target.env.insert("API_TOKEN".into(), "abc".into());
+        let env = target_env(&target);
+        assert!(env.contains(&("BASE_URL".into(), "https://staging.example.com".into())));
+        assert!(env.contains(&(
+            "PLAYWRIGHT_TEST_BASE_URL".into(),
+            "https://staging.example.com".into()
+        )));
+        assert!(env.contains(&("API_TOKEN".into(), "abc".into())));
+    }
+
+    #[test]
+    fn target_env_empty_when_unset() {
+        assert!(target_env(&TestTarget::default()).is_empty());
     }
 
     const REPORT: &str = r#"

@@ -4,8 +4,11 @@ import {
   Check,
   Database,
   Download,
+  Globe,
+  Plus,
   RefreshCw,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import type { UpdateInfo } from "@/lib/types";
@@ -19,6 +22,7 @@ export function Settings() {
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
         <div className="mx-auto flex max-w-2xl flex-col gap-6">
+          <TestTargetSection />
           <LfsSection />
           <UpdatesSection />
         </div>
@@ -47,6 +51,122 @@ function Section({
       <p className="mb-4 text-xs leading-relaxed text-text-secondary">{blurb}</p>
       {children}
     </section>
+  );
+}
+
+interface EnvRow {
+  key: string;
+  value: string;
+}
+
+function TestTargetSection() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["test-target"],
+    queryFn: api.getTestTarget,
+  });
+
+  const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [rows, setRows] = useState<EnvRow[] | null>(null);
+
+  // Seed local edit state from the loaded target once.
+  const loadedBaseUrl = baseUrl ?? data?.baseUrl ?? "";
+  const loadedRows =
+    rows ??
+    Object.entries(data?.env ?? {}).map(([key, value]) => ({ key, value }));
+
+  const save = useMutation({
+    mutationFn: () => {
+      const env: Record<string, string> = {};
+      for (const r of loadedRows) {
+        const k = r.key.trim();
+        if (k) env[k] = r.value;
+      }
+      return api.setTestTarget({
+        baseUrl: loadedBaseUrl.trim() || null,
+        env,
+      });
+    },
+    onSuccess: () => {
+      // Base URL feeds the generate-spec context; refresh dependents.
+      qc.invalidateQueries({ queryKey: ["test-target"] });
+      setBaseUrl(null);
+      setRows(null);
+    },
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  const setRow = (i: number, patch: Partial<EnvRow>) =>
+    setRows(loadedRows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const addRow = () => setRows([...loadedRows, { key: "", value: "" }]);
+  const removeRow = (i: number) =>
+    setRows(loadedRows.filter((_, j) => j !== i));
+
+  return (
+    <Section
+      icon={<Globe size={15} className="text-brand-accent" />}
+      title="Test target"
+      blurb="Where Playwright runs point. The base URL is passed to each run as BASE_URL, PLAYWRIGHT_TEST_BASE_URL and PLAYWRIGHT_BASE_URL, and is used when the agent generates specs. Have your playwright config read it, e.g. baseURL: process.env.BASE_URL. Stored locally (gitignored), never committed."
+    >
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-text-muted">
+        Base URL
+      </label>
+      <input
+        value={loadedBaseUrl}
+        onChange={(e) => setBaseUrl(e.target.value)}
+        placeholder="https://staging.example.com"
+        spellCheck={false}
+        className="mb-4 h-8 w-full rounded-control border border-border-subtle bg-bg-base px-2.5 font-mono text-sm text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
+      />
+
+      <label className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-text-muted">
+        Environment variables
+      </label>
+      <div className="flex flex-col gap-1.5">
+        {loadedRows.map((r, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <input
+              value={r.key}
+              onChange={(e) => setRow(i, { key: e.target.value })}
+              placeholder="KEY"
+              spellCheck={false}
+              className="h-8 w-44 rounded-control border border-border-subtle bg-bg-base px-2.5 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
+            />
+            <input
+              value={r.value}
+              onChange={(e) => setRow(i, { value: e.target.value })}
+              placeholder="value"
+              spellCheck={false}
+              className="h-8 flex-1 rounded-control border border-border-subtle bg-bg-base px-2.5 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
+            />
+            <button
+              onClick={() => removeRow(i)}
+              className="rounded-control p-1.5 text-text-muted hover:bg-status-failed/10 hover:text-status-failed"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+        <button
+          onClick={addRow}
+          className="flex w-fit items-center gap-1 rounded-control px-1 py-1 text-xs text-text-secondary hover:text-text-primary"
+        >
+          <Plus size={13} /> Add variable
+        </button>
+      </div>
+
+      <div className="mt-4">
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => save.mutate()}
+          disabled={save.isPending}
+        >
+          {save.isSuccess ? <Check size={13} /> : null}
+          Save target
+        </Button>
+      </div>
+    </Section>
   );
 }
 

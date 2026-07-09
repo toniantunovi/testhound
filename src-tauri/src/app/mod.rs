@@ -2,6 +2,7 @@
 
 pub mod sample;
 
+use crate::assistant;
 use crate::automation::{
     self,
     agent::{self, AgentAvailability, AgentKind, Mode},
@@ -11,16 +12,17 @@ use crate::error::{Error, Result};
 use crate::git;
 use crate::lfs::{self, LfsStatus};
 use crate::merge::{self, Conflicts, IdCollision, Side};
-use crate::playwright::{self, PlaywrightInfo};
+use crate::playwright::{self, PlaywrightInfo, TestTarget};
 use crate::repo::runs::{self, CreateRun, RunDetail, RunSummary};
 use crate::repo::{self, CaseSummary, Paths, SuiteTree};
 use crate::domain::{
     Configuration, IncludeMode, Milestone, Project, ResultSource, ResultStatus, Run, RunResult,
-    RunState, TestCase,
+    RunState, Suite, TestCase,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::process::Child;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 /// The currently open project. libgit2's `Repository` is not thread-safe, so we
@@ -35,6 +37,9 @@ pub struct Open {
 #[derive(Default)]
 pub struct AppState {
     pub open: Mutex<Option<Open>>,
+    /// The assistant's currently-running agent child, if any, so it can be
+    /// stopped mid-run. Only one assistant turn runs at a time.
+    pub assistant_child: Arc<Mutex<Option<Child>>>,
 }
 
 impl AppState {
@@ -169,6 +174,36 @@ pub async fn current_project(state: tauri::State<'_, AppState>) -> Result<Option
     Ok(Some(project_info(&open.paths, &project)?))
 }
 
+/// Create a new test suite from a display name. The id is a slug of the name;
+/// errors if a suite with that id already exists. Returns the new suite id. The
+/// change lands in the working tree for review in the Changes panel.
+#[tauri::command]
+pub async fn create_suite(name: String, state: tauri::State<'_, AppState>) -> Result<String> {
+    let paths = state.paths()?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Other("suite name is empty".into()));
+    }
+    let id = slug::slugify(name);
+    if id.is_empty() {
+        return Err(Error::Other("suite name has no usable characters".into()));
+    }
+    let existing = repo::list_suites(&paths)?;
+    if existing.iter().any(|s| s.id == id) {
+        return Err(Error::Other(format!(
+            "a suite \"{name}\" already exists"
+        )));
+    }
+    let suite = Suite {
+        id: id.clone(),
+        name: name.to_string(),
+        description: None,
+        order: existing.len() as i64,
+    };
+    repo::create_suite(&paths, &suite)?;
+    Ok(id)
+}
+
 #[tauri::command]
 pub async fn list_suites(state: tauri::State<'_, AppState>) -> Result<Vec<SuiteTree>> {
     repo::list_suites(&state.paths()?)
@@ -200,6 +235,17 @@ pub async fn create_case(
     let body = "## Preconditions\n- \n\n## Steps\n1. \n   - **Expected:** \n";
     let case = repo::new_case(id, title, suite, body);
     repo::save_case(&paths, &case)
+}
+
+/// Delete a test case: remove its file and drop its `automation/links.yml`
+/// entry. The change lands in the working tree for review in the Changes panel;
+/// nothing is committed.
+#[tauri::command]
+pub async fn delete_case(id: String, state: tauri::State<'_, AppState>) -> Result<()> {
+    let paths = state.paths()?;
+    repo::delete_case(&paths, &id)?;
+    automation::remove_link(&paths, &id)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -333,6 +379,22 @@ pub async fn playwright_info(state: tauri::State<'_, AppState>) -> Result<Playwr
     Ok(playwright::detect(&state.paths()?.root))
 }
 
+/// The configured test target (base URL + env) that runs are directed to.
+#[tauri::command]
+pub async fn get_test_target(state: tauri::State<'_, AppState>) -> Result<TestTarget> {
+    Ok(playwright::load_target(&state.paths()?))
+}
+
+/// Save the test target. Stored locally (gitignored) so it can point at a
+/// personal environment or hold secrets without being committed.
+#[tauri::command]
+pub async fn set_test_target(
+    target: TestTarget,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    playwright::save_target(&state.paths()?, &target)
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LogEvent {
@@ -369,7 +431,12 @@ struct FinishedEvent {
 /// work runs on a background thread and reports via `run://*` events
 /// (docs/02-architecture.md §2.4).
 #[tauri::command]
-pub fn run_playwright(run_id: String, app: AppHandle, state: tauri::State<AppState>) -> Result<()> {
+pub fn run_playwright(
+    run_id: String,
+    headed: bool,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
     let paths = state.paths()?;
     let run = runs::load_run(&paths, &run_id)?.run;
     let _ = app.emit(
@@ -383,7 +450,7 @@ pub fn run_playwright(run_id: String, app: AppHandle, state: tauri::State<AppSta
     std::thread::spawn(move || {
         let log_app = app.clone();
         let log_id = run_id.clone();
-        let result = playwright::execute(&paths, &run, Some("playwright"), |line| {
+        let result = playwright::execute(&paths, &run, Some("playwright"), headed, |line| {
             let _ = log_app.emit(
                 "run://log",
                 LogEvent {
@@ -429,6 +496,82 @@ pub fn run_playwright(run_id: String, app: AppHandle, state: tauri::State<AppSta
             }
         };
         let _ = app.emit("run://finished", finished);
+    });
+
+    Ok(())
+}
+
+/// Run a single case's linked spec ad-hoc to watch it, WITHOUT creating a run or
+/// recording results. Streams output through the same `run://*` events as a real
+/// run (keyed by a synthetic `preview:<case>` id) so it shows in the Activity
+/// console; nothing is persisted.
+#[tauri::command]
+pub fn run_case_spec(
+    case_id: String,
+    headed: bool,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let case = repo::load_case(&paths, &case_id)?;
+    let specs = case.front.automation.specs.clone();
+    if specs.is_empty() {
+        return Err(Error::Playwright(format!(
+            "{case_id} has no linked spec to run"
+        )));
+    }
+    let preview_id = format!("preview:{case_id}");
+    let _ = app.emit(
+        "run://started",
+        StartedEvent {
+            run_id: preview_id.clone(),
+            cases: 1,
+        },
+    );
+
+    std::thread::spawn(move || {
+        let log_app = app.clone();
+        let log_id = preview_id.clone();
+        let result = playwright::run_spec_preview(&paths, &specs, headed, |line| {
+            let _ = log_app.emit(
+                "run://log",
+                LogEvent {
+                    run_id: log_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        });
+        let error = match result {
+            Ok(()) => {
+                let _ = app.emit(
+                    "run://log",
+                    LogEvent {
+                        run_id: preview_id.clone(),
+                        line: "Preview finished.".to_string(),
+                    },
+                );
+                None
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = app.emit(
+                    "run://log",
+                    LogEvent {
+                        run_id: preview_id.clone(),
+                        line: format!("error: {msg}"),
+                    },
+                );
+                Some(msg)
+            }
+        };
+        let _ = app.emit(
+            "run://finished",
+            FinishedEvent {
+                run_id: preview_id.clone(),
+                summary: None,
+                error,
+            },
+        );
     });
 
     Ok(())
@@ -523,6 +666,111 @@ struct AgentFinishedEvent {
     /// For triage: the agent's classification + suggestion text.
     output: Option<String>,
     error: Option<String>,
+}
+
+// ---- Assistant panel ----------------------------------------------------------
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantChunkEvent {
+    /// The turn id this chunk belongs to (so the panel ignores stale turns).
+    turn_id: String,
+    /// `"text"` (assistant prose), `"tool"` (activity), or `"log"` (raw line).
+    kind: String,
+    text: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssistantFinishedEvent {
+    turn_id: String,
+    /// The final answer text.
+    reply: String,
+    /// Session id to resume the conversation on the next turn (Claude Code).
+    session_id: Option<String>,
+    error: Option<String>,
+}
+
+/// Send one message to the conversational assistant. Runs the chosen agent
+/// (Claude Code / Codex) against the repo on a background thread with a broad,
+/// auto-accepting tool scope, streaming `assistant://*` events. File changes
+/// land in the working tree for the user to review in the Changes panel; nothing
+/// is committed. `session_id` (returned by the previous turn) resumes the
+/// conversation; `history` gives agents without native resume the transcript.
+#[tauri::command]
+pub async fn assistant_send(
+    turn_id: String,
+    agent_id: String,
+    message: String,
+    session_id: Option<String>,
+    history: Vec<assistant::ChatMessage>,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let kind = AgentKind::from_id(&agent_id)
+        .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
+    let turn = assistant::build_turn(kind, &paths, &history, &message, session_id.is_some());
+    let child_slot = state.assistant_child.clone();
+
+    std::thread::spawn(move || {
+        let emit_app = app.clone();
+        let emit_id = turn_id.clone();
+        let result = agent::run_chat(
+            &paths.root,
+            kind,
+            &turn.prompt,
+            session_id.as_deref(),
+            turn.system.as_deref(),
+            child_slot,
+            |ev| {
+                let (kind, text) = match ev {
+                    agent::ChatEvent::Text(t) => ("text", t),
+                    agent::ChatEvent::Tool(t) => ("tool", t),
+                    agent::ChatEvent::Log(t) => ("log", t),
+                    // `Done` is consumed inside run_chat; never forwarded here.
+                    agent::ChatEvent::Done { .. } => return,
+                };
+                let _ = emit_app.emit(
+                    "assistant://chunk",
+                    AssistantChunkEvent {
+                        turn_id: emit_id.clone(),
+                        kind: kind.to_string(),
+                        text,
+                    },
+                );
+            },
+        );
+
+        let finished = match result {
+            Ok(outcome) => AssistantFinishedEvent {
+                turn_id: turn_id.clone(),
+                reply: outcome.reply,
+                session_id: outcome.session_id,
+                error: None,
+            },
+            Err(e) => AssistantFinishedEvent {
+                turn_id: turn_id.clone(),
+                reply: String::new(),
+                session_id: session_id.clone(),
+                error: Some(e.to_string()),
+            },
+        };
+        let _ = app.emit("assistant://finished", finished);
+    });
+
+    Ok(())
+}
+
+/// Stop the assistant's currently-running agent, killing its process tree. The
+/// in-flight turn then finishes with whatever it had streamed so far.
+#[tauri::command]
+pub async fn assistant_stop(state: tauri::State<'_, AppState>) -> Result<()> {
+    let child = state.assistant_child.lock().unwrap().take();
+    if let Some(mut child) = child {
+        agent::kill_child(&mut child);
+    }
+    Ok(())
 }
 
 /// Generate (or update) a Playwright spec for a case with a coding agent. Runs

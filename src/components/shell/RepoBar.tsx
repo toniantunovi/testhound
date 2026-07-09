@@ -10,16 +10,20 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Sparkles,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
+import { useAssistant } from "@/store/assistant";
 import { cn } from "@/lib/utils";
 
 export function RepoBar() {
   const project = useSession((s) => s.project);
   const navigate = useSession((s) => s.navigate);
   const togglePalette = useSession((s) => s.togglePalette);
+  const toggleAssistant = useAssistant((s) => s.toggle);
+  const assistantOpen = useAssistant((s) => s.open);
   const push = useActivity((s) => s.push);
   const finish = useActivity((s) => s.finish);
   const qc = useQueryClient();
@@ -184,6 +188,21 @@ export function RepoBar() {
         <kbd className="rounded bg-bg-surface-2 px-1 font-mono text-[10px] text-text-secondary">
           ⌘K
         </kbd>
+      </button>
+
+      {/* Assistant panel toggle */}
+      <button
+        onClick={toggleAssistant}
+        title="Toggle assistant (⌘J)"
+        className={cn(
+          "th-no-drag flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs font-medium transition-colors",
+          assistantOpen
+            ? "border-brand-accent/40 bg-brand-accent/10 text-brand-accent"
+            : "border-border-subtle text-text-secondary hover:border-border-strong hover:text-text-primary",
+        )}
+      >
+        <Sparkles size={12} className={assistantOpen ? "" : "text-brand-accent"} />
+        Assistant
       </button>
 
       {/* Sync */}

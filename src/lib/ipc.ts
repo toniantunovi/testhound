@@ -6,7 +6,10 @@ import type {
   AgentFinishedEvent,
   AgentLogEvent,
   AgentStartedEvent,
+  AssistantChunkEvent,
+  AssistantFinishedEvent,
   BlameLine,
+  ChatMessage,
   CaseCommitDiff,
   CaseSummary,
   CommitInfo,
@@ -35,6 +38,7 @@ import type {
   Side,
   SuiteTree,
   TestCase,
+  TestTarget,
   UpdateInfo,
 } from "./types";
 
@@ -75,6 +79,7 @@ export const api = {
   currentProject: () => invoke<ProjectInfo | null>("current_project"),
 
   listSuites: () => invoke<SuiteTree[]>("list_suites"),
+  createSuite: (name: string) => invoke<string>("create_suite", { name }),
   listCases: () => invoke<CaseSummary[]>("list_cases"),
   getCase: (id: string) =>
     invoke<TestCase>("get_case", { id }).then(normalizeCase),
@@ -82,6 +87,7 @@ export const api = {
     invoke<TestCase>("save_case", { case: testCase }).then(normalizeCase),
   createCase: (suite: string, title: string) =>
     invoke<TestCase>("create_case", { suite, title }).then(normalizeCase),
+  deleteCase: (id: string) => invoke<void>("delete_case", { id }),
 
   gitStatus: () => invoke<GitStatus>("git_status"),
   listBranches: () => invoke<string[]>("list_branches"),
@@ -119,7 +125,13 @@ export const api = {
   listConfigurations: () => invoke<Configuration[]>("list_configurations"),
 
   playwrightInfo: () => invoke<PlaywrightInfo>("playwright_info"),
-  runPlaywright: (runId: string) => invoke<void>("run_playwright", { runId }),
+  getTestTarget: () => invoke<TestTarget>("get_test_target"),
+  setTestTarget: (target: TestTarget) =>
+    invoke<void>("set_test_target", { target }),
+  runPlaywright: (runId: string, headed: boolean) =>
+    invoke<void>("run_playwright", { runId, headed }),
+  runCaseSpec: (caseId: string, headed: boolean) =>
+    invoke<void>("run_case_spec", { caseId, headed }),
   openTrace: (path: string) => invoke<void>("open_trace", { path }),
 
   // AI automation (M4)
@@ -166,6 +178,17 @@ export const api = {
 
   checkForUpdate: () => invoke<UpdateInfo>("check_for_update"),
   installUpdate: () => invoke<void>("install_update"),
+
+  // Conversational assistant panel. Streams `assistant://*` events; file changes
+  // land in the working tree for review in the Changes panel.
+  assistantSend: (args: {
+    turnId: string;
+    agentId: string;
+    message: string;
+    sessionId: string | null;
+    history: ChatMessage[];
+  }) => invoke<void>("assistant_send", args),
+  assistantStop: () => invoke<void>("assistant_stop"),
 };
 
 // ---- Playwright run lifecycle events -----------------------------------------
@@ -194,6 +217,15 @@ export const agentEvents = {
     listen<AgentLogEvent>("agent://log", (e) => cb(e.payload)),
   onFinished: (cb: (e: AgentFinishedEvent) => void): Promise<UnlistenFn> =>
     listen<AgentFinishedEvent>("agent://finished", (e) => cb(e.payload)),
+};
+
+// ---- Assistant streaming events ----------------------------------------------
+
+export const assistantEvents = {
+  onChunk: (cb: (e: AssistantChunkEvent) => void): Promise<UnlistenFn> =>
+    listen<AssistantChunkEvent>("assistant://chunk", (e) => cb(e.payload)),
+  onFinished: (cb: (e: AssistantFinishedEvent) => void): Promise<UnlistenFn> =>
+    listen<AssistantFinishedEvent>("assistant://finished", (e) => cb(e.payload)),
 };
 
 /** Normalize an IPC error (a plain string from the Rust side) to a message. */

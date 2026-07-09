@@ -273,6 +273,12 @@ export interface AgentAvailability {
   available: boolean;
 }
 
+/** Where Playwright runs are directed (base URL + extra env). Stored locally. */
+export interface TestTarget {
+  baseUrl?: string | null;
+  env?: Record<string, string>;
+}
+
 export interface RepoContext {
   config: string | null;
   testsDir: string;
@@ -332,6 +338,28 @@ export interface AgentFinishedEvent {
   kind: string;
   changedSpecs: string[];
   output: string | null;
+  error: string | null;
+}
+
+// ---- Assistant panel ---------------------------------------------------------
+
+/** A transcript message passed back to the backend each turn. */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+/** kind is "text" (prose), "tool" (activity), or "log" (raw line). */
+export interface AssistantChunkEvent {
+  turnId: string;
+  kind: "text" | "tool" | "log";
+  text: string;
+}
+
+export interface AssistantFinishedEvent {
+  turnId: string;
+  reply: string;
+  sessionId: string | null;
   error: string | null;
 }
 

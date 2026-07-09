@@ -5,10 +5,12 @@ import {
   Check,
   GitBranch,
   History,
+  Play,
   Save,
   Sparkles,
+  Trash2,
 } from "lucide-react";
-import { api } from "@/lib/ipc";
+import { api, errMsg } from "@/lib/ipc";
 import type {
   CaseStatus,
   CaseType,
@@ -67,6 +69,34 @@ export function CaseEditor() {
     },
   });
 
+  // Ad-hoc: run this case's spec in a visible browser to watch it, without
+  // creating a run. Output streams to the Activity console.
+  const runSpec = useMutation({
+    mutationFn: (caseId: string) => api.runCaseSpec(caseId, true),
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  const remove = useMutation({
+    mutationFn: (caseId: string) => api.deleteCase(caseId),
+    onSuccess: () => {
+      ["cases", "suites", "coverage", "dashboard", "git-status"].forEach((k) =>
+        qc.invalidateQueries({ queryKey: [k] }),
+      );
+      navigate("cases");
+    },
+  });
+
+  const confirmDelete = () => {
+    if (!draft) return;
+    if (
+      window.confirm(
+        `Delete ${draft.id} "${draft.title}"?\n\nThe file is removed from the working tree; review and commit the deletion in the Changes panel.`,
+      )
+    ) {
+      remove.mutate(draft.id);
+    }
+  };
+
   if (!draft) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-text-muted">
@@ -103,6 +133,15 @@ export function CaseEditor() {
           onClick={() => openCaseHistory(draft.id)}
         >
           <History size={13} /> History
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={confirmDelete}
+          disabled={remove.isPending}
+          className="text-text-muted hover:text-status-failed"
+        >
+          <Trash2 size={13} /> Delete
         </Button>
         <Button
           variant="primary"
@@ -251,6 +290,19 @@ export function CaseEditor() {
               <p className="mb-3 text-xs text-text-muted">
                 No linked Playwright spec yet.
               </p>
+            )}
+            {draft.automation.specs && draft.automation.specs.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="mb-2 w-full"
+                disabled={runSpec.isPending}
+                title="Run this spec now in a visible browser (does not create a run)"
+                onClick={() => runSpec.mutate(draft.id)}
+              >
+                <Play size={13} className="text-brand-accent" />
+                Run in browser
+              </Button>
             )}
             <Button
               variant="secondary"

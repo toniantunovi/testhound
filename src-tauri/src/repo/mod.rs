@@ -280,6 +280,14 @@ pub fn load_case(paths: &Paths, id: &str) -> Result<TestCase> {
     case_file::parse(&content)
 }
 
+/// Delete a case file from disk. Errors if no case with `id` exists. The change
+/// is left uncommitted for the user to review.
+pub fn delete_case(paths: &Paths, id: &str) -> Result<()> {
+    let path = case_path(paths, id)?;
+    fs::remove_file(&path)?;
+    Ok(())
+}
+
 /// Write a case to disk, recomputing derived structure. Returns the saved case.
 pub fn save_case(paths: &Paths, case: &TestCase) -> Result<TestCase> {
     let suite_dir = paths.suites_dir().join(&case.front.suite);

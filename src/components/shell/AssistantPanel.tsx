@@ -1,0 +1,361 @@
+import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowUp,
+  ChevronDown,
+  Plus,
+  Sparkles,
+  Square,
+  Wrench,
+  X,
+} from "lucide-react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { api, assistantEvents, errMsg } from "@/lib/ipc";
+import type { AgentAvailability, ChatMessage } from "@/lib/types";
+import { useAssistant } from "@/store/assistant";
+import { cn } from "@/lib/utils";
+
+/** Quote a path for the composer when it contains whitespace. */
+function quotePath(p: string): string {
+  return /\s/.test(p) ? `"${p}"` : p;
+}
+
+/** Quick-start prompts shown on an empty conversation. */
+const SUGGESTIONS = [
+  "Import test cases from a CSV file",
+  "Convert a Playwright spec into a manual test case",
+  "Suggest new test cases to close coverage gaps",
+  "Run exploratory testing on a page and file findings",
+];
+
+// Queries whose data the assistant may have changed on disk.
+const REFRESH_KEYS = [
+  "cases",
+  "suites",
+  "runs",
+  "dashboard",
+  "coverage",
+  "git-status",
+  "conflicts",
+];
+
+function newTurnId(): string {
+  return `t-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function AssistantPanel() {
+  const open = useAssistant((s) => s.open);
+  const setOpen = useAssistant((s) => s.setOpen);
+  const agentId = useAssistant((s) => s.agentId);
+  const setAgent = useAssistant((s) => s.setAgent);
+  const sessionId = useAssistant((s) => s.sessionId);
+  const messages = useAssistant((s) => s.messages);
+  const busy = useAssistant((s) => s.busy);
+  const beginTurn = useAssistant((s) => s.beginTurn);
+  const appendText = useAssistant((s) => s.appendText);
+  const appendActivity = useAssistant((s) => s.appendActivity);
+  const finishTurn = useAssistant((s) => s.finishTurn);
+  const reset = useAssistant((s) => s.reset);
+
+  const qc = useQueryClient();
+  const [agents, setAgents] = useState<AgentAvailability[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load installed agents and default to the first available one.
+  useEffect(() => {
+    api.listAgents().then((list) => {
+      setAgents(list);
+      const firstAvail = list.find((a) => a.available) ?? list[0];
+      if (firstAvail) setAgent(firstAvail.id);
+    });
+  }, [setAgent]);
+
+  // Subscribe to streamed assistant events for the lifetime of the panel.
+  useEffect(() => {
+    const unlisten = [
+      assistantEvents.onChunk((e) => {
+        if (e.kind === "text") appendText(e.turnId, e.text);
+        else appendActivity(e.turnId, e.text);
+      }),
+      assistantEvents.onFinished((e) => {
+        finishTurn(e.turnId, e.reply, e.sessionId, e.error);
+        // The agent may have written files; refresh the data-backed views.
+        REFRESH_KEYS.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      }),
+    ];
+    return () => {
+      unlisten.forEach((p) => p.then((fn) => fn()));
+    };
+  }, [appendText, appendActivity, finishTurn, qc]);
+
+  // Keep the transcript scrolled to the newest message.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+  }, [messages]);
+
+  // Native file drop: Tauri gives us real filesystem paths. When files are
+  // dropped over this panel, append their paths to the composer so the user can
+  // add an instruction ("import these") and send.
+  useEffect(() => {
+    const overPanel = (pos?: { x: number; y: number }) => {
+      const el = panelRef.current;
+      if (!el || !pos) return false;
+      const r = el.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const x = pos.x / dpr;
+      const y = pos.y / dpr;
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    };
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        const p = event.payload;
+        if (p.type === "enter" || p.type === "over") {
+          setDragOver(overPanel(p.position));
+        } else if (p.type === "leave") {
+          setDragOver(false);
+        } else if (p.type === "drop") {
+          setDragOver(false);
+          if (overPanel(p.position) && p.paths.length > 0) {
+            setInput((prev) => {
+              const prefix = prev.trimEnd() ? `${prev.trimEnd()} ` : "";
+              return `${prefix}${p.paths.map(quotePath).join(" ")} `;
+            });
+            setTimeout(() => textareaRef.current?.focus(), 0);
+          }
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  if (!open) return null;
+
+  const activeAgent = agents.find((a) => a.id === agentId);
+
+  const send = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed || busy) return;
+    const turnId = newTurnId();
+    const history: ChatMessage[] = messages
+      .filter((m) => !m.streaming && !m.error)
+      .map((m) => ({ role: m.role, content: m.content }));
+    beginTurn(turnId, trimmed);
+    setInput("");
+    try {
+      await api.assistantSend({
+        turnId,
+        agentId,
+        message: trimmed,
+        sessionId,
+        history,
+      });
+    } catch (e) {
+      finishTurn(turnId, "", null, errMsg(e));
+    }
+  };
+
+  const stop = () => {
+    api.assistantStop().catch(() => {});
+  };
+
+  return (
+    <aside
+      ref={panelRef}
+      className={cn(
+        "relative flex h-full w-[400px] shrink-0 flex-col border-l border-border-subtle bg-bg-surface",
+        dragOver && "ring-2 ring-inset ring-brand-accent",
+      )}
+    >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex items-center justify-center bg-bg-base/70">
+          <div className="rounded-card border border-brand-accent/50 bg-bg-surface px-4 py-2 text-sm text-brand-accent">
+            Drop file to add its path
+          </div>
+        </div>
+      )}
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
+        <Sparkles size={15} className="text-brand-accent" />
+        <span className="text-sm font-semibold text-text-primary">Assistant</span>
+
+        <div className="relative ml-auto">
+          <button
+            onClick={() => setPickerOpen((o) => !o)}
+            className="flex items-center gap-1 rounded-control border border-border-subtle bg-bg-surface-2 px-2 py-1 text-xs text-text-secondary hover:border-border-strong"
+          >
+            {activeAgent?.name ?? agentId}
+            <ChevronDown size={12} className="text-text-muted" />
+          </button>
+          {pickerOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40"
+                onClick={() => setPickerOpen(false)}
+              />
+              <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
+                {agents.map((a) => (
+                  <button
+                    key={a.id}
+                    disabled={!a.available}
+                    onClick={() => {
+                      setAgent(a.id);
+                      setPickerOpen(false);
+                    }}
+                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary disabled:opacity-40"
+                  >
+                    {a.name}
+                    {!a.available && (
+                      <span className="text-[10px] text-text-muted">
+                        not found
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={reset}
+          title="New conversation"
+          disabled={busy}
+          className="rounded-control p-1 text-text-muted hover:bg-bg-surface-2 hover:text-text-primary disabled:opacity-40"
+        >
+          <Plus size={15} />
+        </button>
+        <button
+          onClick={() => setOpen(false)}
+          title="Close"
+          className="rounded-control p-1 text-text-muted hover:bg-bg-surface-2 hover:text-text-primary"
+        >
+          <X size={15} />
+        </button>
+      </div>
+
+      {/* Transcript */}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto px-3 py-3">
+        {messages.length === 0 ? (
+          <div className="flex h-full flex-col justify-center gap-3">
+            <p className="text-sm text-text-secondary">
+              Ask me to work on your test data. I edit files directly; review
+              changes in the Changes panel before committing.
+            </p>
+            <div className="flex flex-col gap-1.5">
+              {SUGGESTIONS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => send(s)}
+                  className="rounded-card border border-border-subtle bg-bg-base px-3 py-2 text-left text-xs text-text-secondary hover:border-border-strong hover:text-text-primary"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {messages.map((m) => (
+              <Message key={m.id} msg={m} />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Composer */}
+      <div className="border-t border-border-subtle p-2.5">
+        <div className="flex items-end gap-2 rounded-card border border-border-subtle bg-bg-base px-2.5 py-2 focus-within:border-border-strong">
+          <textarea
+            ref={textareaRef}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send(input);
+              }
+            }}
+            rows={1}
+            placeholder={
+              busy
+                ? "Working…"
+                : "Ask anything, or drop a file to add its path…"
+            }
+            disabled={busy}
+            className="max-h-40 min-h-[20px] flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-60"
+          />
+          {busy ? (
+            <button
+              onClick={stop}
+              title="Stop the agent"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-status-failed/90 text-bg-base transition-colors hover:bg-status-failed"
+            >
+              <Square size={13} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              onClick={() => send(input)}
+              disabled={!input.trim()}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-primary text-bg-base transition-colors hover:bg-brand-primary/90 disabled:opacity-40"
+            >
+              <ArrowUp size={15} />
+            </button>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function Message({ msg }: { msg: import("@/store/assistant").AssistantMsg }) {
+  if (msg.role === "user") {
+    return (
+      <div className="ml-6 self-end rounded-card bg-bg-surface-2 px-3 py-2 text-sm text-text-primary">
+        {msg.content}
+      </div>
+    );
+  }
+  return (
+    <div className="mr-2 flex flex-col gap-1.5">
+      {msg.activity.length > 0 && (
+        <div className="flex flex-col gap-0.5 rounded-card border border-border-subtle bg-bg-base px-2.5 py-1.5">
+          {msg.activity.slice(-8).map((line, i) => (
+            <div
+              key={i}
+              className="flex items-center gap-1.5 font-mono text-[11px] text-text-muted"
+            >
+              <Wrench size={10} className="shrink-0 text-brand-accent" />
+              <span className="truncate">{line}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {(msg.content || msg.streaming) && (
+        <div
+          className={cn(
+            "whitespace-pre-wrap text-sm leading-relaxed",
+            msg.error ? "text-status-failed" : "text-text-secondary",
+          )}
+        >
+          {msg.content || (msg.streaming ? "Thinking…" : "")}
+          {msg.streaming && (
+            <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-brand-accent align-middle" />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

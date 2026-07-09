@@ -41,11 +41,13 @@ pub struct RepoContext {
     pub target_path: String,
 }
 
-/// Default location for a case's spec: `tests/<suite>/<slug>.spec.ts`.
-pub fn spec_path_for(case: &TestCase) -> String {
+/// Default location for a case's spec: `<tests_dir>/<suite>/<slug>.spec.ts`.
+/// `tests_dir` is the project's Playwright `testDir` so generated specs land
+/// where Playwright actually discovers them.
+pub fn spec_path_for(case: &TestCase, tests_dir: &str) -> String {
     format!(
         "{}/{}/{}.spec.ts",
-        "tests",
+        tests_dir,
         case.front.suite,
         slug::slugify(&case.front.title)
     )
@@ -54,11 +56,23 @@ pub fn spec_path_for(case: &TestCase) -> String {
 /// Inspect the repo to build [`RepoContext`] for a case.
 pub fn detect_context(paths: &Paths, case: &TestCase) -> RepoContext {
     let pw = playwright::detect(&paths.root);
-    let tests_dir = "tests".to_string();
-    let base_url = pw
+    // Respect the project's configured `testDir` (e.g. `./playwright`) so specs
+    // are generated where Playwright looks; fall back to `tests`.
+    let tests_dir = pw
         .config
         .as_deref()
-        .and_then(|cfg| detect_base_url(&paths.root.join(cfg)));
+        .and_then(|cfg| detect_test_dir(&paths.root.join(cfg)))
+        .unwrap_or_else(|| "tests".to_string());
+    // A configured test target wins over whatever is scraped from the config, so
+    // generated specs point at the address the user set in Settings.
+    let base_url = playwright::load_target(paths)
+        .base_url
+        .filter(|u| !u.trim().is_empty())
+        .or_else(|| {
+            pw.config
+                .as_deref()
+                .and_then(|cfg| detect_base_url(&paths.root.join(cfg)))
+        });
 
     // Nearby specs: existing spec files under the suite's tests dir, capped.
     let suite_dir = paths.root.join(&tests_dir).join(&case.front.suite);
@@ -67,10 +81,10 @@ pub fn detect_context(paths: &Paths, case: &TestCase) -> RepoContext {
 
     RepoContext {
         config: pw.config,
+        target_path: spec_path_for(case, &tests_dir),
         tests_dir,
         base_url,
         nearby_specs: nearby,
-        target_path: spec_path_for(case),
     }
 }
 
@@ -86,6 +100,23 @@ fn detect_base_url(config: &Path) -> Option<String> {
     let end = rest.find(quote)?;
     let url = rest[..end].trim();
     (!url.is_empty()).then(|| url.to_string())
+}
+
+/// Best-effort scrape of `testDir: "…"` from a Playwright config, normalized to
+/// a repo-relative directory (no leading `./`, no trailing slash).
+fn detect_test_dir(config: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(config).ok()?;
+    let idx = text.find("testDir")?;
+    let after = &text[idx + "testDir".len()..];
+    let after = after.trim_start_matches([':', ' ', '\t']);
+    let quote = after.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let rest = &after[1..];
+    let end = rest.find(quote)?;
+    let dir = rest[..end]
+        .trim()
+        .trim_start_matches("./")
+        .trim_end_matches('/');
+    (!dir.is_empty()).then(|| dir.to_string())
 }
 
 // ---- prompt building ----------------------------------------------------------
@@ -255,6 +286,17 @@ pub fn upsert_link(paths: &Paths, link: Link) -> Result<()> {
     file.links.push(link);
     file.links.sort_by(|a, b| a.case.cmp(&b.case));
     save_links(paths, &file)
+}
+
+/// Drop any link entry for `case`. No-op (and no rewrite) if there is none.
+pub fn remove_link(paths: &Paths, case: &str) -> Result<()> {
+    let mut file = load_links(paths)?;
+    let before = file.links.len();
+    file.links.retain(|l| l.case != case);
+    if file.links.len() != before {
+        save_links(paths, &file)?;
+    }
+    Ok(())
 }
 
 // ---- accept flow --------------------------------------------------------------
@@ -553,7 +595,23 @@ mod tests {
 
     #[test]
     fn spec_path_convention() {
-        assert_eq!(spec_path_for(&sample_case()), "tests/checkout/add-item-to-cart.spec.ts");
+        assert_eq!(
+            spec_path_for(&sample_case(), "tests"),
+            "tests/checkout/add-item-to-cart.spec.ts"
+        );
+        // Honors a project's configured testDir.
+        assert_eq!(
+            spec_path_for(&sample_case(), "playwright"),
+            "playwright/checkout/add-item-to-cart.spec.ts"
+        );
+    }
+
+    #[test]
+    fn detect_test_dir_scrapes_config() {
+        let dir = std::env::temp_dir().join(format!("th-cfg-{}.ts", std::process::id()));
+        std::fs::write(&dir, "export default { testDir: './playwright', use: {} }").unwrap();
+        assert_eq!(detect_test_dir(&dir).as_deref(), Some("playwright"));
+        std::fs::remove_file(&dir).ok();
     }
 
     #[test]
@@ -564,7 +622,7 @@ mod tests {
             tests_dir: "tests".into(),
             base_url: Some("http://localhost:3000".into()),
             nearby_specs: vec!["tests/checkout/cart.spec.ts".into()],
-            target_path: spec_path_for(&case),
+            target_path: spec_path_for(&case, "tests"),
         };
         let p = generate_prompt(&case, &ctx);
         assert!(p.contains("titled exactly \"Add item to cart\""));

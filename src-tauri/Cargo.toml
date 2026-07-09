@@ -41,11 +41,10 @@ opt-level = "s"
 panic = "abort"
 strip = true
 
-# Keep `pnpm app:dev` responsive: optimize dependencies (git2, serde, etc.)
-# fully once, and this crate lightly, so backend calls aren't 10-50x slower
-# than release while incremental rebuilds stay fast.
-[profile.dev]
-opt-level = 1
-
+# Keep `pnpm app:dev` responsive by optimizing dependencies (git2, serde, etc.)
+# fully once; that is where the backend spends its time. The local crate stays
+# at the default opt-level 0 so incremental compilation stays correct: at
+# opt-level >= 1 incremental builds can emit dangling `_anon.*.llvm.*` symbols
+# and fail to link. Deps are built non-incrementally, so O3 there is safe.
 [profile.dev.package."*"]
 opt-level = 3

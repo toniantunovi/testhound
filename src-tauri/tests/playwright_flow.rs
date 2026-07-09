@@ -271,9 +271,10 @@ echo "1 passed (2.5s)"
 
     let run_meta = runs::load_run(&paths, &run.id).unwrap().run;
     let mut lines = Vec::new();
-    let summary =
-        playwright::execute(&paths, &run_meta, Some("playwright"), |l| lines.push(l.to_string()))
-            .unwrap();
+    let summary = playwright::execute(&paths, &run_meta, Some("playwright"), false, |l| {
+        lines.push(l.to_string())
+    })
+    .unwrap();
 
     assert_eq!(summary.updated.len(), 1);
     assert!(lines.iter().any(|l| l.contains("Running 1 test")));

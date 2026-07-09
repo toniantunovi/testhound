@@ -10,7 +10,8 @@
 use crate::error::{Error, Result};
 use serde::Serialize;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 
 /// A supported coding agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +117,11 @@ pub fn build_args(kind: AgentKind, mode: Mode, prompt: &str) -> Vec<String> {
     let s = |v: &str| v.to_string();
     match kind {
         AgentKind::ClaudeCode => {
-            let mut args = vec![s("-p")];
+            // The prompt goes immediately after `-p` (canonical
+            // `claude -p "prompt" [flags]`). It must NOT trail `--allowedTools`,
+            // which is variadic and would otherwise swallow it as a tool name,
+            // leaving Claude with no prompt argument.
+            let mut args = vec![s("-p"), prompt.to_string()];
             match mode {
                 Mode::Edit => {
                     args.push(s("--permission-mode"));
@@ -130,7 +135,6 @@ pub fn build_args(kind: AgentKind, mode: Mode, prompt: &str) -> Vec<String> {
                     args.push(s("Read"));
                 }
             }
-            args.push(prompt.to_string());
             args
         }
         AgentKind::Codex => {
@@ -227,6 +231,337 @@ pub fn run<F: FnMut(&str)>(
     Ok(captured)
 }
 
+// ---- Conversational (assistant panel) mode -----------------------------------
+//
+// The assistant panel is a multi-turn version of the one-shot runner above. It
+// keeps the repo as the working directory and grants a broad, auto-accepting
+// tool scope (the user opted into "git is the safety net"), so the agent can
+// import files, convert specs, write and organize cases, run Playwright, and
+// drive a headed browser for exploratory testing.
+
+/// A high-level streamed event, normalized across agents so the UI does not
+/// have to know each CLI's output shape.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChatEvent {
+    /// Assistant natural-language prose.
+    Text(String),
+    /// The agent invoked a tool; a short human summary (e.g. `Edit TC-0007.md`).
+    Tool(String),
+    /// A raw output line we could not classify (Codex, or unparsable Claude).
+    Log(String),
+    /// Terminal event carrying the resumable session id and final answer.
+    Done {
+        session_id: Option<String>,
+        text: String,
+        is_error: bool,
+    },
+}
+
+/// The result of one conversational turn.
+#[derive(Debug, Clone)]
+pub struct ChatOutcome {
+    /// The agent's final answer text.
+    pub reply: String,
+    /// A session id to pass to the next turn for continuity (Claude Code only).
+    pub session_id: Option<String>,
+}
+
+/// Build the argument vector for one conversational turn. Pure, so the flags are
+/// pinned by tests. Claude Code streams structured JSON (`stream-json`) and
+/// resumes its own session; Codex gets the whole context baked into the prompt
+/// by the caller since headless resume is not wired here.
+pub fn build_chat_args(
+    kind: AgentKind,
+    prompt: &str,
+    resume: Option<&str>,
+    system: Option<&str>,
+) -> Vec<String> {
+    let s = |v: &str| v.to_string();
+    match kind {
+        AgentKind::ClaudeCode => {
+            // Prompt immediately after `-p`, before any variadic flag such as
+            // `--allowedTools` (which would otherwise consume it).
+            let mut args = vec![
+                s("-p"),
+                prompt.to_string(),
+                s("--output-format"),
+                s("stream-json"),
+                s("--verbose"),
+                s("--permission-mode"),
+                s("acceptEdits"),
+                s("--allowedTools"),
+                s("Read Edit Write Bash Glob Grep WebFetch"),
+            ];
+            if let Some(sys) = system {
+                args.push(s("--append-system-prompt"));
+                args.push(sys.to_string());
+            }
+            if let Some(id) = resume {
+                args.push(s("--resume"));
+                args.push(id.to_string());
+            }
+            args
+        }
+        AgentKind::Codex => vec![s("exec"), s("--full-auto"), prompt.to_string()],
+    }
+}
+
+/// Turn one line of Claude Code `stream-json` output into zero or more
+/// high-level [`ChatEvent`]s. Unparsable lines yield nothing (the caller may
+/// still surface them as raw logs).
+pub fn parse_claude_line(line: &str) -> Vec<ChatEvent> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return vec![];
+    };
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("assistant") => {
+            let mut out = Vec::new();
+            if let Some(content) = v
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            {
+                for block in content {
+                    match block.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                                if !t.trim().is_empty() {
+                                    out.push(ChatEvent::Text(t.to_string()));
+                                }
+                            }
+                        }
+                        Some("tool_use") => {
+                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
+                            out.push(ChatEvent::Tool(summarize_tool(name, block.get("input"))));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            out
+        }
+        Some("result") => {
+            let session_id = v
+                .get("session_id")
+                .and_then(|s| s.as_str())
+                .map(String::from);
+            let text = v
+                .get("result")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let is_error = v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false)
+                || v.get("subtype")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s != "success")
+                    .unwrap_or(false);
+            vec![ChatEvent::Done {
+                session_id,
+                text,
+                is_error,
+            }]
+        }
+        _ => vec![],
+    }
+}
+
+/// A short, human-readable summary of a tool invocation for the activity feed.
+fn summarize_tool(name: &str, input: Option<&serde_json::Value>) -> String {
+    let field = |key: &str| {
+        input
+            .and_then(|i| i.get(key))
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+    };
+    let detail = field("file_path")
+        .or_else(|| field("path"))
+        .or_else(|| field("command"))
+        .or_else(|| field("pattern"))
+        .or_else(|| field("url"));
+    match detail {
+        Some(d) => {
+            let d = if d.len() > 80 { format!("{}…", &d[..80]) } else { d };
+            format!("{name}: {d}")
+        }
+        None => name.to_string(),
+    }
+}
+
+/// Run one conversational turn to completion in `workdir`, forwarding each
+/// [`ChatEvent`] through `on_event` as it arrives. Returns the final answer and
+/// (for Claude Code) a session id to resume next turn.
+pub fn run_chat<F: FnMut(ChatEvent)>(
+    workdir: &Path,
+    kind: AgentKind,
+    prompt: &str,
+    resume: Option<&str>,
+    system: Option<&str>,
+    child_slot: Arc<Mutex<Option<Child>>>,
+    mut on_event: F,
+) -> Result<ChatOutcome> {
+    if !on_path(kind.command()) {
+        return Err(Error::Agent(format!(
+            "{} CLI (`{}`) was not found on PATH",
+            kind.display_name(),
+            kind.command()
+        )));
+    }
+    let args = build_chat_args(kind, prompt, resume, system);
+
+    let mut command = Command::new(kind.command());
+    command
+        .args(&args)
+        .current_dir(workdir)
+        .env("FORCE_COLOR", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Put the agent in its own process group so Stop can terminate the whole
+    // tree (the CLI plus any Playwright/browser it spawned), not just the parent.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|e| Error::Agent(format!("failed to launch {}: {e}", kind.command())))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    // Register the running child so `assistant_stop` can terminate it mid-run.
+    *child_slot.lock().unwrap() = Some(child);
+
+    let stderr_handle = stderr.map(|err| {
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            BufReader::new(err)
+                .lines()
+                .map_while(std::result::Result::ok)
+                .collect::<Vec<_>>()
+        })
+    });
+
+    let mut reply = String::new();
+    let mut session_id = resume.map(String::from);
+    let mut saw_error = false;
+
+    if let Some(out) = stdout {
+        use std::io::{BufRead, BufReader};
+        for line in BufReader::new(out).lines().map_while(std::result::Result::ok) {
+            match kind {
+                AgentKind::ClaudeCode => {
+                    let events = parse_claude_line(&line);
+                    if events.is_empty() {
+                        continue;
+                    }
+                    for ev in events {
+                        match ev {
+                            ChatEvent::Text(t) => {
+                                reply.push_str(&t);
+                                reply.push('\n');
+                                on_event(ChatEvent::Text(t));
+                            }
+                            ChatEvent::Done {
+                                session_id: sid,
+                                text,
+                                is_error,
+                            } => {
+                                if sid.is_some() {
+                                    session_id = sid;
+                                }
+                                if !text.trim().is_empty() {
+                                    reply = text;
+                                }
+                                saw_error = is_error;
+                            }
+                            other => on_event(other),
+                        }
+                    }
+                }
+                AgentKind::Codex => {
+                    reply.push_str(&line);
+                    reply.push('\n');
+                    on_event(ChatEvent::Log(line));
+                }
+            }
+        }
+    }
+
+    // Reclaim the child to wait on it. If Stop already took it, we were
+    // cancelled: return whatever streamed before the kill.
+    let Some(mut child) = child_slot.lock().unwrap().take() else {
+        return Ok(ChatOutcome {
+            reply: reply.trim().to_string(),
+            session_id,
+        });
+    };
+
+    let status = child
+        .wait()
+        .map_err(|e| Error::Agent(format!("agent did not exit cleanly: {e}")))?;
+
+    let stderr_lines = stderr_handle
+        .and_then(|h| h.join().ok())
+        .unwrap_or_default();
+
+    if !status.success() {
+        let detail: String = stderr_lines
+            .iter()
+            .filter(|l| !l.trim().is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n");
+        let reason = if detail.trim().is_empty() {
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
+        } else {
+            detail
+        };
+        return Err(Error::Agent(format!(
+            "{} exited unsuccessfully: {reason}",
+            kind.display_name()
+        )));
+    }
+
+    if saw_error && reply.trim().is_empty() {
+        return Err(Error::Agent(format!(
+            "{} reported an error with no output",
+            kind.display_name()
+        )));
+    }
+
+    Ok(ChatOutcome {
+        reply: reply.trim().to_string(),
+        session_id,
+    })
+}
+
+/// Terminate a running agent child and, on Unix, its whole process group, then
+/// reap it. Used by the Stop control in the assistant panel.
+pub fn kill_child(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // A negative pid targets the process group created via `process_group`,
+        // so tools the agent spawned (bash, Playwright, a browser) die too.
+        let pid = child.id();
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .arg(format!("-{pid}"))
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 /// Collapse the (potentially long) prompt argument for the echoed command line.
 fn redact(args: &[String]) -> String {
     args.iter()
@@ -259,12 +594,14 @@ mod tests {
     fn claude_edit_args_scope_tools() {
         let args = build_args(AgentKind::ClaudeCode, Mode::Edit, "do it");
         assert_eq!(args.first().unwrap(), "-p");
+        // Prompt sits right after `-p`, never trailing the variadic --allowedTools.
+        assert_eq!(args[1], "do it");
         assert!(args.contains(&"acceptEdits".to_string()));
         let i = args.iter().position(|a| a == "--allowedTools").unwrap();
         assert!(args[i + 1].contains("Write"));
         assert!(args[i + 1].contains("Bash(npx playwright:*)"));
-        // Prompt is the final positional argument.
-        assert_eq!(args.last().unwrap(), "do it");
+        // Nothing follows the tool list that the CLI could mistake for a tool.
+        assert_eq!(i + 1, args.len() - 1);
     }
 
     #[test]
@@ -290,5 +627,63 @@ mod tests {
     fn redact_hides_long_prompt() {
         let out = redact(&["-p".into(), "x".repeat(100)]);
         assert!(out.contains("<prompt 100 chars>"));
+    }
+
+    #[test]
+    fn chat_args_stream_json_and_resume() {
+        let args = build_chat_args(AgentKind::ClaudeCode, "hi", Some("sess-1"), Some("ctx"));
+        assert_eq!(args.first().unwrap(), "-p");
+        // Prompt right after `-p`, before the variadic --allowedTools.
+        assert_eq!(args[1], "hi");
+        let fmt = args.iter().position(|a| a == "--output-format").unwrap();
+        assert_eq!(args[fmt + 1], "stream-json");
+        let res = args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(args[res + 1], "sess-1");
+        let sys = args.iter().position(|a| a == "--append-system-prompt").unwrap();
+        assert_eq!(args[sys + 1], "ctx");
+    }
+
+    #[test]
+    fn chat_args_first_turn_has_no_resume() {
+        let args = build_chat_args(AgentKind::ClaudeCode, "hi", None, None);
+        assert!(!args.iter().any(|a| a == "--resume"));
+        assert!(!args.iter().any(|a| a == "--append-system-prompt"));
+    }
+
+    #[test]
+    fn codex_chat_args_are_exec_full_auto() {
+        let args = build_chat_args(AgentKind::Codex, "do it", None, Some("ignored"));
+        assert_eq!(args, vec!["exec", "--full-auto", "do it"]);
+    }
+
+    #[test]
+    fn parse_assistant_text_and_tool() {
+        let line = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Working"},{"type":"tool_use","name":"Edit","input":{"file_path":"testhound/cases/TC-0007.md"}}]}}"#;
+        let events = parse_claude_line(line);
+        assert_eq!(events[0], ChatEvent::Text("Working".into()));
+        assert_eq!(
+            events[1],
+            ChatEvent::Tool("Edit: testhound/cases/TC-0007.md".into())
+        );
+    }
+
+    #[test]
+    fn parse_result_captures_session_and_text() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"session_id":"abc","result":"Done"}"#;
+        let events = parse_claude_line(line);
+        assert_eq!(
+            events[0],
+            ChatEvent::Done {
+                session_id: Some("abc".into()),
+                text: "Done".into(),
+                is_error: false,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ignores_unrelated_lines() {
+        assert!(parse_claude_line("not json").is_empty());
+        assert!(parse_claude_line(r#"{"type":"system"}"#).is_empty());
     }
 }

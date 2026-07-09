@@ -3,6 +3,7 @@
 //! (Tauri command handlers + state).
 
 pub mod app;
+pub mod assistant;
 pub mod automation;
 pub mod domain;
 pub mod error;
@@ -26,11 +27,13 @@ pub fn run() {
             app::scaffold_project,
             app::open_project,
             app::current_project,
+            app::create_suite,
             app::list_suites,
             app::list_cases,
             app::get_case,
             app::save_case,
             app::create_case,
+            app::delete_case,
             app::git_status,
             app::list_branches,
             app::switch_branch,
@@ -44,7 +47,10 @@ pub fn run() {
             app::list_milestones,
             app::list_configurations,
             app::playwright_info,
+            app::get_test_target,
+            app::set_test_target,
             app::run_playwright,
+            app::run_case_spec,
             app::open_trace,
             app::list_agents,
             app::coverage,
@@ -53,6 +59,8 @@ pub fn run() {
             app::accept_generation,
             app::generate_spec,
             app::triage_failure,
+            app::assistant_send,
+            app::assistant_stop,
             app::list_conflicts,
             app::resolve_case_conflict,
             app::resolve_case_keep,

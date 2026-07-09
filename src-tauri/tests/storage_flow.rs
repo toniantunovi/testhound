@@ -79,6 +79,13 @@ fn scaffold_seed_and_roundtrip() {
     assert!(repo::load_case(&paths, &id).is_ok());
     assert_eq!(repo::list_cases(&paths).unwrap().len(), 11);
 
+    // Deleting removes the file and it is gone from the listing.
+    repo::delete_case(&paths, &id).unwrap();
+    assert!(repo::load_case(&paths, &id).is_err());
+    assert_eq!(repo::list_cases(&paths).unwrap().len(), 10);
+    // Deleting a missing case surfaces an error rather than silently passing.
+    assert!(repo::delete_case(&paths, "TC-9999").is_err());
+
     // Git sees the new files as untracked changes.
     let repository = git::open(&root).unwrap();
     let status = git::status(&repository).unwrap();

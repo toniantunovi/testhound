@@ -3,8 +3,10 @@ import { RepoBar } from "./RepoBar";
 import { Sidebar } from "./Sidebar";
 import { ActivityConsole } from "./ActivityConsole";
 import { CommandPalette } from "./CommandPalette";
+import { AssistantPanel } from "./AssistantPanel";
 import { useRunEvents } from "@/lib/useRunEvents";
 import { useSession } from "@/store/session";
+import { useAssistant } from "@/store/assistant";
 import { Dashboard } from "@/screens/Dashboard";
 import { Cases } from "@/screens/Cases";
 import { CaseEditor } from "@/screens/CaseEditor";
@@ -22,19 +24,25 @@ import { Placeholder } from "@/screens/Placeholder";
 export function AppShell() {
   const view = useSession((s) => s.view);
   const togglePalette = useSession((s) => s.togglePalette);
+  const toggleAssistant = useAssistant((s) => s.toggle);
   useRunEvents();
 
-  // ⌘K / Ctrl-K opens the command palette from anywhere.
+  // ⌘K opens the command palette; ⌘J toggles the assistant panel.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "k") {
         e.preventDefault();
         togglePalette();
+      } else if (key === "j") {
+        e.preventDefault();
+        toggleAssistant();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [togglePalette]);
+  }, [togglePalette, toggleAssistant]);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -60,6 +68,7 @@ export function AppShell() {
           )}
           {view === "settings" && <Settings />}
         </main>
+        <AssistantPanel />
       </div>
       <ActivityConsole />
       <GenerationDrawer />

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   Check,
+  Eye,
   FileArchive,
   Loader2,
   Play,
@@ -40,6 +41,7 @@ export function RunView() {
   const [triage, setTriage] = useState<{ caseId: string; title: string } | null>(
     null,
   );
+  const [headed, setHeaded] = useState(false);
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -53,7 +55,7 @@ export function RunView() {
   });
 
   const runAutomated = useMutation({
-    mutationFn: () => api.runPlaywright(id!),
+    mutationFn: () => api.runPlaywright(id!, headed),
     onError: (e) => useActivity.getState().push(`x ${errMsg(e)}`),
   });
 
@@ -109,17 +111,31 @@ export function RunView() {
         <RunStateBadge state={run.state} />
         <div className="flex-1" />
         {pw?.detected ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={running || automatable === 0}
-            title={
-              automatable === 0
-                ? "No cases in this run have a linked spec"
-                : "Execute linked Playwright specs and ingest results"
-            }
-            onClick={() => runAutomated.mutate()}
-          >
+          <>
+            <button
+              onClick={() => setHeaded((h) => !h)}
+              disabled={running}
+              title="Run in a visible browser you can watch (headed, one test at a time)"
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-control border px-2.5 text-xs font-medium transition-colors disabled:opacity-50",
+                headed
+                  ? "border-brand-accent/40 bg-brand-accent/10 text-brand-accent"
+                  : "border-border-subtle text-text-secondary hover:border-border-strong hover:text-text-primary",
+              )}
+            >
+              <Eye size={13} /> Visible browser
+            </button>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={running || automatable === 0}
+              title={
+                automatable === 0
+                  ? "No cases in this run have a linked spec"
+                  : "Execute linked Playwright specs and ingest results"
+              }
+              onClick={() => runAutomated.mutate()}
+            >
             {running ? (
               <>
                 <Loader2 size={13} className="animate-spin" /> Running…
@@ -129,7 +145,8 @@ export function RunView() {
                 <Play size={13} /> Run automated
               </>
             )}
-          </Button>
+            </Button>
+          </>
         ) : (
           <span
             className="text-[11px] text-text-muted"

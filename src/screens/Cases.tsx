@@ -1,7 +1,15 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronRight, Filter, Plus, Search } from "lucide-react";
-import { api } from "@/lib/ipc";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Filter,
+  Plus,
+  Search,
+  Trash2,
+} from "lucide-react";
+import { api, errMsg } from "@/lib/ipc";
 import type { CaseSummary, Priority, SuiteTree } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
@@ -41,6 +49,40 @@ export function Cases() {
       openCase(created.id);
     },
   });
+
+  const deleteCase = useMutation({
+    mutationFn: (id: string) => api.deleteCase(id),
+    onSuccess: () => {
+      ["cases", "suites", "coverage", "dashboard", "git-status"].forEach((k) =>
+        qc.invalidateQueries({ queryKey: [k] }),
+      );
+    },
+  });
+
+  const createSuite = useMutation({
+    mutationFn: (name: string) => api.createSuite(name),
+    onSuccess: (id) => {
+      qc.invalidateQueries({ queryKey: ["suites"] });
+      qc.invalidateQueries({ queryKey: ["git-status"] });
+      selectSuite(id, null);
+    },
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  const promptNewSuite = () => {
+    const name = window.prompt("New suite name")?.trim();
+    if (name) createSuite.mutate(name);
+  };
+
+  const confirmDelete = (c: CaseSummary) => {
+    if (
+      window.confirm(
+        `Delete ${c.id} "${c.title}"?\n\nThe file is removed from the working tree; review and commit the deletion in the Changes panel.`,
+      )
+    ) {
+      deleteCase.mutate(c.id);
+    }
+  };
 
   const filtered = useMemo(() => {
     return cases.filter((c) => {
@@ -82,6 +124,8 @@ export function Cases() {
         selectedSuite={selectedSuite}
         selectedSection={selectedSection}
         onSelect={selectSuite}
+        onCreateSuite={promptNewSuite}
+        creating={createSuite.isPending}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -125,7 +169,11 @@ export function Cases() {
               No cases match. Create one with “New case”.
             </div>
           ) : (
-            <CaseTable cases={filtered} onOpen={(id) => openCase(id)} />
+            <CaseTable
+              cases={filtered}
+              onOpen={(id) => openCase(id)}
+              onDelete={confirmDelete}
+            />
           )}
         </div>
       </div>
@@ -188,12 +236,16 @@ function SuiteTreeNav({
   selectedSuite,
   selectedSection,
   onSelect,
+  onCreateSuite,
+  creating,
 }: {
   suites: SuiteTree[];
   totalCount: number;
   selectedSuite: string;
   selectedSection: string | null;
   onSelect: (suite: string, section?: string | null) => void;
+  onCreateSuite: () => void;
+  creating: boolean;
 }) {
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-bg-surface/50">
@@ -201,7 +253,12 @@ function SuiteTreeNav({
         <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
           Suites
         </span>
-        <button className="text-text-muted hover:text-text-primary">
+        <button
+          onClick={onCreateSuite}
+          disabled={creating}
+          title="New suite"
+          className="text-text-muted hover:text-text-primary disabled:opacity-40"
+        >
           <Plus size={14} />
         </button>
       </div>
@@ -280,9 +337,11 @@ function TreeRow({
 function CaseTable({
   cases,
   onOpen,
+  onDelete,
 }: {
   cases: CaseSummary[];
   onOpen: (id: string) => void;
+  onDelete: (c: CaseSummary) => void;
 }) {
   return (
     <table className="w-full border-collapse text-sm">
@@ -297,7 +356,8 @@ function CaseTable({
           <Th className="w-28">Type</Th>
           <Th className="w-36">Automation</Th>
           <Th className="w-20">Owner</Th>
-          <Th className="w-20 pr-6">Updated</Th>
+          <Th className="w-20">Updated</Th>
+          <Th className="w-10 pr-6" />
         </tr>
       </thead>
       <tbody>
@@ -327,8 +387,17 @@ function CaseTable({
                 {initials(c.owner)}
               </span>
             </td>
-            <td className="py-2 pr-6 text-xs text-text-muted">
+            <td className="py-2 text-xs text-text-muted">
               {relativeTime(c.updated)}
+            </td>
+            <td className="py-2 pr-6" onClick={(e) => e.stopPropagation()}>
+              <button
+                onClick={() => onDelete(c)}
+                title={`Delete ${c.id}`}
+                className="rounded-control p-1 text-text-muted opacity-0 transition-opacity hover:bg-status-failed/10 hover:text-status-failed group-hover:opacity-100"
+              >
+                <Trash2 size={14} />
+              </button>
             </td>
           </tr>
         ))}
