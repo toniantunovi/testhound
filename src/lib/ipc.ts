@@ -6,7 +6,10 @@ import type {
   AgentFinishedEvent,
   AgentLogEvent,
   AgentStartedEvent,
+  BlameLine,
+  CaseCommitDiff,
   CaseSummary,
+  CommitInfo,
   Configuration,
   Conflicts,
   Coverage,
@@ -125,6 +128,20 @@ export const api = {
     invoke<void>("resolve_case_delete", { path }),
   idCollisions: () => invoke<IdCollision[]>("id_collisions"),
   renumberCase: (path: string) => invoke<string>("renumber_case", { path }),
+
+  // Changes, commit & sync (M6)
+  commitChanges: (message: string, files: string[]) =>
+    invoke<GitStatus>("commit_changes", { message, files }),
+  pushChanges: () => invoke<string>("push_changes"),
+  syncRepo: () => invoke<string>("sync_repo"),
+
+  // Case history & diff (M6)
+  caseHistory: (id: string) => invoke<CommitInfo[]>("case_history", { id }),
+  caseCommitDiff: (id: string, hash: string) =>
+    invoke<CaseCommitDiff>("case_commit_diff", { id, hash }),
+  caseBlame: (id: string) => invoke<BlameLine[]>("case_blame", { id }),
+  restoreCaseVersion: (id: string, hash: string) =>
+    invoke<TestCase>("restore_case_version", { id, hash }),
 
   lfsStatus: () => invoke<LfsStatus>("lfs_status"),
   enableLfs: () => invoke<LfsStatus>("enable_lfs"),

@@ -62,6 +62,13 @@ pub fn run() {
             app::lfs_status,
             app::enable_lfs,
             app::disable_lfs,
+            app::commit_changes,
+            app::push_changes,
+            app::sync_repo,
+            app::case_history,
+            app::case_commit_diff,
+            app::case_blame,
+            app::restore_case_version,
             app::check_for_update,
             app::install_update,
         ])

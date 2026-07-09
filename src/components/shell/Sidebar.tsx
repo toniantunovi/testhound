@@ -23,7 +23,7 @@ export function Sidebar() {
 
   const isActive = (v: View) =>
     view === v ||
-    (v === "cases" && view === "case-editor") ||
+    (v === "cases" && (view === "case-editor" || view === "case-history")) ||
     (v === "runs" && (view === "new-run" || view === "run-view"));
 
   return (

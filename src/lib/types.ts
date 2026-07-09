@@ -387,6 +387,35 @@ export interface UpdateInfo {
   error: string | null;
 }
 
+// ---- Changes, history & diff (M6) --------------------------------------------
+
+export interface CommitInfo {
+  hash: string;
+  short: string;
+  author: string;
+  email: string;
+  /** RFC3339 author date. */
+  when: string;
+  message: string;
+  summary: string;
+}
+
+export interface CaseCommitDiff {
+  path: string;
+  old: string | null;
+  newContent: string;
+  isNew: boolean;
+  commit: CommitInfo;
+  /** The commit changed step expectations and the case has a linked spec. */
+  affectsSpec: boolean;
+}
+
+export interface BlameLine {
+  line: number;
+  short: string;
+  author: string;
+}
+
 export interface Dashboard {
   activeCases: number;
   totalCases: number;

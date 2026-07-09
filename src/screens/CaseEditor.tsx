@@ -36,6 +36,7 @@ const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
 export function CaseEditor() {
   const id = useSession((s) => s.openCaseId);
   const navigate = useSession((s) => s.navigate);
+  const openCaseHistory = useSession((s) => s.openCaseHistory);
   const openDrawer = useAgentDrawer((s) => s.open);
   const qc = useQueryClient();
 
@@ -96,7 +97,11 @@ export function CaseEditor() {
           {draft.section ? ` / ${draft.section}` : ""}
         </span>
         <div className="flex-1" />
-        <Button variant="ghost" size="sm">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => openCaseHistory(draft.id)}
+        >
           <History size={13} /> History
         </Button>
         <Button

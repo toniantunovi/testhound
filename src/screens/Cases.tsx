@@ -1,12 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Filter, Plus, Search } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Filter, Plus, Search } from "lucide-react";
 import { api } from "@/lib/ipc";
-import type { CaseSummary, SuiteTree } from "@/lib/types";
+import type { CaseSummary, Priority, SuiteTree } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+
+const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
 
 export function Cases() {
   const selectedSuite = useSession((s) => s.selectedSuite);
@@ -16,6 +18,7 @@ export function Cases() {
   const qc = useQueryClient();
 
   const [query, setQuery] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
 
   const { data: suites = [] } = useQuery({
     queryKey: ["suites"],
@@ -43,6 +46,7 @@ export function Cases() {
     return cases.filter((c) => {
       if (selectedSuite !== "all" && c.suite !== selectedSuite) return false;
       if (selectedSection && c.section !== selectedSection) return false;
+      if (priorityFilter !== "all" && c.priority !== priorityFilter) return false;
       if (query) {
         const q = query.toLowerCase();
         if (
@@ -54,7 +58,7 @@ export function Cases() {
       }
       return true;
     });
-  }, [cases, selectedSuite, selectedSection, query]);
+  }, [cases, selectedSuite, selectedSection, query, priorityFilter]);
 
   const automated = filtered.filter(
     (c) => c.automationState === "linked" || c.automationState === "drifted",
@@ -102,6 +106,7 @@ export function Cases() {
             <Button variant="secondary" size="md">
               <Filter size={13} /> Filters
             </Button>
+            <PriorityFilter value={priorityFilter} onChange={setPriorityFilter} />
             <Button
               variant="primary"
               size="md"
@@ -124,6 +129,55 @@ export function Cases() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function PriorityFilter({
+  value,
+  onChange,
+}: {
+  value: Priority | "all";
+  onChange: (v: Priority | "all") => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = value === "all" ? "Priority" : value;
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          "flex h-8 items-center gap-1.5 rounded-control border px-3 text-sm capitalize",
+          value === "all"
+            ? "border-border-strong bg-bg-surface-2 text-text-primary"
+            : "border-brand-primary/40 bg-brand-primary/10 text-brand-primary",
+        )}
+      >
+        {label}
+        <ChevronDown size={13} className="opacity-70" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
+            {(["all", ...PRIORITIES] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => {
+                  onChange(p);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm capitalize text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+              >
+                <span className="w-3">
+                  {p === value && <Check size={12} className="text-brand-primary" />}
+                </span>
+                {p === "all" ? "All priorities" : p}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

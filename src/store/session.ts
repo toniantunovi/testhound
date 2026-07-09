@@ -5,10 +5,12 @@ export type View =
   | "dashboard"
   | "cases"
   | "case-editor"
+  | "case-history"
   | "runs"
   | "new-run"
   | "run-view"
   | "automation"
+  | "changes"
   | "merge"
   | "reports"
   | "settings";
@@ -19,20 +21,25 @@ interface SessionState {
   /** Selected suite id in the Cases tree, or "all". */
   selectedSuite: string;
   selectedSection: string | null;
-  /** Case currently open in the editor. */
+  /** Case currently open in the editor / history view. */
   openCaseId: string | null;
   /** Run currently open in the execution view. */
   openRunId: string | null;
   activityOpen: boolean;
+  /** Command palette (⌘K) overlay. */
+  paletteOpen: boolean;
 
   setProject: (p: ProjectInfo | null) => void;
   navigate: (view: View) => void;
   selectSuite: (suite: string, section?: string | null) => void;
   openCase: (id: string) => void;
+  openCaseHistory: (id: string) => void;
   openRun: (id: string) => void;
   newRun: () => void;
   toggleActivity: () => void;
   setActivity: (open: boolean) => void;
+  setPalette: (open: boolean) => void;
+  togglePalette: () => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -43,14 +50,18 @@ export const useSession = create<SessionState>((set) => ({
   openCaseId: null,
   openRunId: null,
   activityOpen: false,
+  paletteOpen: false,
 
   setProject: (project) => set({ project }),
   navigate: (view) => set({ view }),
   selectSuite: (selectedSuite, selectedSection = null) =>
     set({ selectedSuite, selectedSection, view: "cases" }),
   openCase: (openCaseId) => set({ openCaseId, view: "case-editor" }),
+  openCaseHistory: (openCaseId) => set({ openCaseId, view: "case-history" }),
   openRun: (openRunId) => set({ openRunId, view: "run-view" }),
   newRun: () => set({ view: "new-run" }),
   toggleActivity: () => set((s) => ({ activityOpen: !s.activityOpen })),
   setActivity: (activityOpen) => set({ activityOpen }),
+  setPalette: (paletteOpen) => set({ paletteOpen }),
+  togglePalette: () => set((s) => ({ paletteOpen: !s.paletteOpen })),
 }));

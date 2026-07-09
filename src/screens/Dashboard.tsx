@@ -180,7 +180,7 @@ function Meter({ pct }: { pct: number }) {
         ? "bg-status-blocked"
         : "bg-status-failed";
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-bg-surface-2">
+    <div className="h-2 w-full overflow-hidden rounded-full bg-bg-surface-2">
       <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
     </div>
   );

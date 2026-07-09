@@ -856,6 +856,145 @@ pub fn disable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
     lfs::disable(&state.paths()?)
 }
 
+// ---- Changes, commit & sync (docs/06-ui-ux.md frame 13, roadmap M6) -----------
+
+/// Stage exactly the selected files and commit them with `message`. Returns the
+/// refreshed status so the changes panel updates in place.
+#[tauri::command]
+pub fn commit_changes(
+    message: String,
+    files: Vec<String>,
+    state: tauri::State<AppState>,
+) -> Result<git::GitStatus> {
+    let paths = state.paths()?;
+    if message.trim().is_empty() {
+        return Err(Error::Other("commit message is empty".into()));
+    }
+    git::commit_paths(&paths.root, message.trim(), &files)?;
+    let repo = git::open(&paths.root)?;
+    git::status(&repo)
+}
+
+/// Push the current branch to its upstream. Shells out to `git` so credential
+/// helpers apply.
+#[tauri::command]
+pub fn push_changes(state: tauri::State<AppState>) -> Result<String> {
+    git::push(&state.paths()?.root)
+}
+
+/// Fast-forward pull then push, for the repo-bar Sync button.
+#[tauri::command]
+pub fn sync_repo(state: tauri::State<AppState>) -> Result<String> {
+    git::sync(&state.paths()?.root)
+}
+
+// ---- Case history & diff (docs/06-ui-ux.md frame 05, roadmap M6) --------------
+
+/// Resolve a case id to its repo-relative file path.
+fn case_path(paths: &Paths, id: &str) -> Result<String> {
+    repo::list_cases(paths)?
+        .into_iter()
+        .find(|c| c.id == id)
+        .map(|c| c.path)
+        .ok_or_else(|| Error::CaseNotFound(id.to_string()))
+}
+
+/// The commit timeline for a case file (newest first).
+#[tauri::command]
+pub fn case_history(id: String, state: tauri::State<AppState>) -> Result<Vec<git::CommitInfo>> {
+    let paths = state.paths()?;
+    let rel = case_path(&paths, &id)?;
+    let repo = git::open(&paths.root)?;
+    git::log_for_path(&repo, &rel, 100)
+}
+
+/// A case file's diff for one commit: its contents there and at the prior
+/// commit, plus whether the change touched step expectations and so would drift
+/// a linked spec.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaseCommitDiff {
+    pub path: String,
+    pub old: Option<String>,
+    pub new_content: String,
+    pub is_new: bool,
+    pub commit: git::CommitInfo,
+    /// The commit changed steps/expectations and the case has a linked spec, so
+    /// the spec is (or would be) marked drifted.
+    pub affects_spec: bool,
+}
+
+/// Lines that define behaviour: numbered steps and their expectations. Used to
+/// decide whether a commit's edit would drift the linked Playwright spec.
+fn behaviour_lines(s: &str) -> Vec<String> {
+    s.lines()
+        .map(str::trim)
+        .filter(|l| {
+            let lower = l.to_lowercase();
+            lower.contains("expected")
+                || l.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+        })
+        .map(|l| l.to_string())
+        .collect()
+}
+
+#[tauri::command]
+pub fn case_commit_diff(
+    id: String,
+    hash: String,
+    state: tauri::State<AppState>,
+) -> Result<CaseCommitDiff> {
+    let paths = state.paths()?;
+    let rel = case_path(&paths, &id)?;
+    let repo = git::open(&paths.root)?;
+    let old = git::file_before_commit(&repo, &rel, &hash)?;
+    let new_content = git::file_at_commit(&repo, &rel, &hash)?.unwrap_or_default();
+
+    let steps_changed = match &old {
+        Some(o) => behaviour_lines(o) != behaviour_lines(&new_content),
+        None => false,
+    };
+    let has_spec = !repo::load_case(&paths, &id)
+        .map(|c| c.front.automation.specs)
+        .unwrap_or_default()
+        .is_empty();
+
+    Ok(CaseCommitDiff {
+        is_new: old.is_none(),
+        old,
+        commit: git::commit_meta(&repo, &hash)?,
+        path: rel,
+        new_content,
+        affects_spec: steps_changed && has_spec,
+    })
+}
+
+/// Per-line blame for a case's working-tree version.
+#[tauri::command]
+pub fn case_blame(id: String, state: tauri::State<AppState>) -> Result<Vec<git::BlameLine>> {
+    let paths = state.paths()?;
+    let rel = case_path(&paths, &id)?;
+    let repo = git::open(&paths.root)?;
+    git::blame_file(&repo, &rel)
+}
+
+/// Restore a case file to its contents at `hash`, leaving the change unstaged in
+/// the working tree for review. Returns the reloaded case.
+#[tauri::command]
+pub fn restore_case_version(
+    id: String,
+    hash: String,
+    state: tauri::State<AppState>,
+) -> Result<TestCase> {
+    let paths = state.paths()?;
+    let rel = case_path(&paths, &id)?;
+    let repo = git::open(&paths.root)?;
+    let content = git::file_at_commit(&repo, &rel, &hash)?
+        .ok_or_else(|| Error::Other("file did not exist at that commit".into()))?;
+    std::fs::write(paths.root.join(&rel), content)?;
+    repo::load_case(&paths, &id)
+}
+
 // ---- Auto-update (roadmap M5) -------------------------------------------------
 
 /// The result of checking the signed release feed for a newer version.
