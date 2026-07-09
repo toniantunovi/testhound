@@ -6,20 +6,48 @@
 
 <p align="center">A Git-native, AI-powered test management desktop app.</p>
 
-TestHound is a TestRails alternative built as a Tauri desktop app. It stores every artifact (test cases, suites, runs, results, configuration) as plain files inside your Git repository, and uses coding agents (Claude Code and Codex) to generate and execute Playwright automated tests, keeping manual test cases and their automation linked.
+TestHound is a modern alternative to tools like TestRail, built as a Tauri desktop app. It stores every artifact (test cases, suites, runs, results, configuration) as plain files inside your Git repository, and it uses coding agents (Claude Code and Codex) to generate and maintain Playwright automated tests, keeping manual test cases and their automation linked.
 
 ## Why TestHound
 
-- **The repository is the database.** Every test case, suite, run, and result is a human-readable file (Markdown + YAML/JSON front matter) committed to your repo. Branch, diff, review, and revert like any other code.
-- **Manual and automated stay in sync.** Manual cases link to Playwright specs, with drift detection when a case changes.
+- **The repository is the database.** Every test case, suite, run, and result is a human-readable file (Markdown with YAML/JSON front matter) committed to your repo. Branch, diff, review, and revert test artifacts like any other code.
+- **Manual and automated stay in sync.** Manual cases link to Playwright specs, with automatic drift detection when a case changes.
 - **Agents do the repetitive work.** Claude Code or Codex draft and maintain Playwright specs and help triage failures.
-- **No lock-in.** Deleting TestHound leaves a fully usable, documented repo.
+- **No lock-in.** Removing TestHound leaves behind a fully usable, documented repository.
 
-## Status
+## Features
 
-Milestones **M0 (Foundations)**, the core of **M1 (Git-native test management)**, **M2 (Runs & results)**, **M3 (Playwright execution)**, **M4 (AI automation)**, and **M5 (Collaboration polish)** are implemented: the Tauri v2 app scaffolds/opens a `testhound/` repo, reads and writes the file format, and ships the app shell, Dashboard, Test Cases list, and Test Case editor. M2 adds runs (built from a suite, a filter query, or a hand-picked set), manual result recording with per-case history, milestones and configurations, and a dashboard wired to real run data. M3 detects the project's Playwright install, runs the specs linked to a run's cases (`--grep` by test title, `--project` per configuration), streams live output to the Activity console, parses the JSON reporter, and ingests results as automated outcomes with elapsed times and evidence, including "Open trace" in the trace viewer. M4 adds the agent runner (Claude Code and Codex, invoked headless with a tests-scoped write allow-list): generate or update a Playwright spec from a manual case, review the result in a diff and accept it to link the spec (front matter + `automation/links.yml`), automatic drift detection on every case edit, a Coverage view (per-case automation state, orphan specs, and metrics), and agent-assisted failure triage on failed automated results. M5 adds the collaboration layer: a **semantic 3-way merge** that turns a conflicted case file into a field- and step-level resolver (pick base/ours/theirs per field, then write a clean file and stage it), `next_case_id` collision detection with a renumber-and-relink fix, opt-in **Git LFS** tracking for heavy evidence, a **PR-diff GitHub Action** that renders human-readable case-change summaries as a PR comment, cross-platform release builds (macOS/Windows/Linux via `tauri-action`), and a signed **auto-updater** surfaced in Settings. M6 finishes the designed Git-workflow UI at Figma fidelity: a **Changes / Commit** panel (changed files grouped semantically into cases/specs/results/automation, a per-file diff, a drafted commit message you can regenerate, and commit / commit-and-push), **Test Case History & Diff** (the commit timeline for a case with a per-commit diff, blame, restore-this-version, and a drift callout when an edit changed step expectations), a **⌘K command palette**, and a live repo bar (branch switcher, fast-forward **Sync**, and an uncommitted-changes indicator that opens the Changes panel).
+### Test management
+- Scaffolds or opens a `testhound/` directory in any Git repository and reads/writes the plain-file format.
+- Dashboard, test case list, and a full test case editor with structured steps and expectations.
+- Suites, milestones, and configurations.
 
-## Running
+### Runs and results
+- Build runs from a suite, a filter query, or a hand-picked set of cases.
+- Record manual results with per-case history; the dashboard reflects real run data.
+
+### Playwright execution
+- Detects the project's Playwright installation and runs the specs linked to a run's cases (`--grep` by test title, `--project` per configuration).
+- Streams live output to an activity console, parses the JSON reporter, and ingests results as automated outcomes with elapsed times and evidence, including opening traces in the Playwright trace viewer.
+
+### AI automation
+- Agent runner for Claude Code and Codex, invoked headless with a write allow-list scoped to the tests directory.
+- Generate or update a Playwright spec from a manual case, review the change as a diff, and accept it to link the spec to the case.
+- Coverage view showing per-case automation state, orphan specs, and metrics.
+- Agent-assisted triage of failed automated results.
+
+### Collaboration and Git workflow
+- Semantic 3-way merge: conflicted case files are resolved field by field and step by step (pick base, ours, or theirs), then written back clean and staged.
+- Case ID collision detection with a renumber-and-relink fix.
+- Opt-in Git LFS tracking for heavy evidence files.
+- A GitHub Action that renders human-readable summaries of test case changes as a PR comment.
+- Changes/commit panel with semantically grouped files, per-file diffs, and a drafted commit message; commit or commit-and-push from the app.
+- Test case history with per-commit diffs, blame, and restore, plus a drift callout when an edit changed step expectations.
+- Command palette (⌘K) and a live repo bar with branch switching, fast-forward sync, and an uncommitted-changes indicator.
+
+## Getting started
+
+Prerequisites: [Node.js](https://nodejs.org) with [pnpm](https://pnpm.io), and the [Tauri v2 toolchain](https://v2.tauri.app/start/prerequisites/) (Rust plus platform dependencies).
 
 ```bash
 pnpm install
@@ -34,40 +62,24 @@ pnpm app:build                   # build a distributable desktop bundle
 (cd src-tauri && cargo test)     # Rust unit + integration tests
 ```
 
-On first launch, the onboarding screen connects a local Git repo. If it has no `testhound/` directory, TestHound scaffolds one; check "Seed with sample data" to load the Acme Shop demo used in the Figma design.
+On first launch, the onboarding screen connects a local Git repository. If it has no `testhound/` directory, TestHound scaffolds one. Check "Seed with sample data" to explore the app with a demo project.
 
 ## Architecture
 
-- **`src-tauri/`** – Rust core. Layered as `domain` (pure types + step parsing), `repo` (on-disk serialization, scaffolding, drift), `git` (status/branch via `git2`), `playwright` (spec planning, JSON-report parsing, result ingestion, execution), `automation` (agent runner, prompt building, `links.yml`, coverage, accept flow), and `app` (Tauri commands + state). See `docs/02-architecture.md`.
-- **`src/`** – React + TypeScript frontend (Vite, Tailwind with the design tokens, TanStack Query over IPC, Zustand session state).
+- **`src-tauri/`**: the Rust core, layered as `domain` (pure types and step parsing), `repo` (on-disk serialization, scaffolding, drift detection), `git` (status and branching via `git2`), `playwright` (spec planning, JSON report parsing, result ingestion, execution), `automation` (agent runner, prompt building, spec linking, coverage, accept flow), and `app` (Tauri commands and state).
+- **`src/`**: the React + TypeScript frontend (Vite, Tailwind with design tokens, TanStack Query over IPC, Zustand for session state).
 
-## Releases & auto-update
+## Releases and auto-update
 
-TestHound is distributed via [GitHub Releases](https://github.com/toniantunovi/testhound/releases).
-Pushing a `v*` tag on `main` triggers `.github/workflows/release.yml`, which
-builds TestHound for macOS (Apple Silicon + Intel), Windows, and Linux with
-`tauri-action`, signs the update artifacts, and publishes a GitHub Release
-including the `latest.json` manifest the in-app updater reads.
+TestHound is distributed via [GitHub Releases](https://github.com/toniantunovi/testhound/releases). Pushing a `v*` tag on `main` triggers `.github/workflows/release.yml`, which builds TestHound for macOS (Apple Silicon and Intel), Windows, and Linux with `tauri-action`, signs the update artifacts, and publishes a GitHub Release including the `latest.json` manifest the in-app updater reads.
 
-The updater (Settings -> Updates) checks
-`releases/latest/download/latest.json` and installs signed updates in place.
-The signing private key lives in the `TAURI_SIGNING_PRIVATE_KEY` repo secret;
-the matching public key is committed in `src-tauri/tauri.conf.json`.
+The updater (Settings > Updates) checks `releases/latest/download/latest.json` and installs signed updates in place.
 
-To cut a release, bump `version` in `src-tauri/tauri.conf.json`, commit on
-`main`, and tag it:
+To cut a release, bump `version` in `src-tauri/tauri.conf.json`, commit on `main`, and tag it:
 
 ```bash
 git tag v0.2.0
 git push origin v0.2.0
 ```
 
-To enable signed updates for a fork: generate a keypair with
-`pnpm tauri signer generate -w ~/.tauri/testhound.key`, replace
-`plugins.updater.pubkey` and the endpoint owner/repo in
-`src-tauri/tauri.conf.json`, and set the `TAURI_SIGNING_PRIVATE_KEY` (and, if
-the key has a password, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) repo secrets.
-
-## Documentation
-
-Design and specification documents live in `docs/` (not tracked in Git). The visual design lives in Figma: [TestHound](https://www.figma.com/design/RJe9VzT1kR0mCVSx0qWAep).
+To enable signed updates for a fork: generate a keypair with `pnpm tauri signer generate -w ~/.tauri/testhound.key`, replace `plugins.updater.pubkey` and the endpoint owner/repo in `src-tauri/tauri.conf.json`, and set the `TAURI_SIGNING_PRIVATE_KEY` repo secret (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password).
