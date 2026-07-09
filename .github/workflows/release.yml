@@ -79,6 +79,8 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "TestHound ${{ github.ref_name }}"
           releaseBody: "See the assets below to download and install."
-          releaseDraft: true
+          # Publish immediately: the updater reads latest.json from
+          # `releases/latest/download`, and draft releases never appear there.
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

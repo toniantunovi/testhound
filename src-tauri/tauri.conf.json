@@ -43,9 +43,9 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/OWNER/REPO/releases/latest/download/latest.json"
+        "https://github.com/toniantunovi/testhound/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk5RUEyMUVBQ0M0RDg4NkIKUldScmlFM002aUhxbWF6bzlyQlVrZEs3NjBTRmpjeituMjNkUnBuOWxHVHg1YWtMcFlWT1JQdTAK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwMjAwNEQzRDYzMTIxMTIKUldRU0lUSFcwd1Fna0JCbWYzMWRDMENhNHhwSVpEeFVlRUxJRVFXMExra3lsT3FWYUpueEQ1Tk4K"
     }
   }
 }

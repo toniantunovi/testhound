@@ -1,6 +1,10 @@
-# TestHound
+<p align="center">
+  <img src="src-tauri/icons/icon.png" alt="TestHound" width="160" />
+</p>
 
-A Git-native, AI-powered test management desktop app.
+<h1 align="center">TestHound</h1>
+
+<p align="center">A Git-native, AI-powered test management desktop app.</p>
 
 TestHound is a TestRails alternative built as a Tauri desktop app. It stores every artifact (test cases, suites, runs, results, configuration) as plain files inside your Git repository, and uses coding agents (Claude Code and Codex) to generate and execute Playwright automated tests, keeping manual test cases and their automation linked.
 
@@ -39,23 +43,30 @@ On first launch, the onboarding screen connects a local Git repo. If it has no `
 
 ## Releases & auto-update
 
-Tagging a commit `v*` triggers `.github/workflows/release.yml`, which builds
-TestHound for macOS (Apple Silicon + Intel), Windows, and Linux with
-`tauri-action` and drafts a GitHub Release. The in-app updater (Settings ->
-Updates) reads a signed `latest.json` from the release feed.
+TestHound is distributed via [GitHub Releases](https://github.com/toniantunovi/testhound/releases).
+Pushing a `v*` tag on `main` triggers `.github/workflows/release.yml`, which
+builds TestHound for macOS (Apple Silicon + Intel), Windows, and Linux with
+`tauri-action`, signs the update artifacts, and publishes a GitHub Release
+including the `latest.json` manifest the in-app updater reads.
 
-To enable signed updates for your fork:
+The updater (Settings -> Updates) checks
+`releases/latest/download/latest.json` and installs signed updates in place.
+The signing private key lives in the `TAURI_SIGNING_PRIVATE_KEY` repo secret;
+the matching public key is committed in `src-tauri/tauri.conf.json`.
 
-1. Generate a keypair: `pnpm tauri signer generate -w ~/.tauri/testhound.key`.
-2. Replace `plugins.updater.pubkey` in `src-tauri/tauri.conf.json` with the
-   generated public key, and point `plugins.updater.endpoints` at your repo's
-   release download URL (replace `OWNER/REPO`).
-3. Add repo secrets `TAURI_SIGNING_PRIVATE_KEY` and, if set,
-   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` so CI can sign the update artifacts.
+To cut a release, bump `version` in `src-tauri/tauri.conf.json`, commit on
+`main`, and tag it:
 
-The committed public key is a placeholder for local development; without the
-matching private key in CI, release artifacts are unsigned and the updater
-check reports that no update feed is configured.
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+To enable signed updates for a fork: generate a keypair with
+`pnpm tauri signer generate -w ~/.tauri/testhound.key`, replace
+`plugins.updater.pubkey` and the endpoint owner/repo in
+`src-tauri/tauri.conf.json`, and set the `TAURI_SIGNING_PRIVATE_KEY` (and, if
+the key has a password, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) repo secrets.
 
 ## Documentation
 
