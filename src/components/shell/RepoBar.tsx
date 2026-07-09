@@ -28,7 +28,7 @@ export function RepoBar() {
   const { data: git } = useQuery({
     queryKey: ["git-status"],
     queryFn: api.gitStatus,
-    refetchInterval: 5000,
+    refetchInterval: 15000,
     enabled: !!project,
   });
   const { data: branches = [] } = useQuery({
@@ -39,7 +39,7 @@ export function RepoBar() {
   const { data: conflicts } = useQuery({
     queryKey: ["conflicts"],
     queryFn: api.listConflicts,
-    refetchInterval: 5000,
+    refetchInterval: 15000,
     enabled: !!project,
   });
   const conflictCount =
@@ -50,7 +50,11 @@ export function RepoBar() {
     mutationFn: (name: string) => api.switchBranch(name),
     onSuccess: () => {
       setBranchOpen(false);
-      qc.invalidateQueries();
+      // Refetch only what a branch switch actually changes, instead of
+      // invalidating every query at once (each is a blocking backend call).
+      ["git-status", "conflicts", "cases", "runs", "dashboard", "coverage"].forEach(
+        (key) => qc.invalidateQueries({ queryKey: [key] }),
+      );
     },
   });
 
@@ -69,9 +73,12 @@ export function RepoBar() {
   });
 
   return (
-    <header className="th-drag flex h-11 shrink-0 items-center gap-3 border-b border-border-subtle bg-bg-surface px-3 pl-20">
+    <header
+      data-tauri-drag-region
+      className="th-drag flex h-11 shrink-0 items-center gap-3 border-b border-border-subtle bg-bg-surface px-3 pl-20"
+    >
       {/* Brand */}
-      <div className="flex items-center gap-2">
+      <div data-tauri-drag-region className="flex items-center gap-2">
         <span className="h-2.5 w-2.5 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(110,139,255,0.7)]" />
         <span className="text-sm font-semibold tracking-tight">TestHound</span>
       </div>
@@ -165,7 +172,7 @@ export function RepoBar() {
         </button>
       )}
 
-      <div className="flex-1" />
+      <div data-tauri-drag-region className="flex-1" />
 
       {/* Command palette */}
       <button

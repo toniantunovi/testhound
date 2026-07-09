@@ -50,6 +50,21 @@ export interface CreateRunInput {
   cases: string[];
 }
 
+// The backend omits empty collections (serde `skip_serializing_if`), so a
+// freshly created case arrives without `tags`/`steps`/etc. The TS types and the
+// UI treat these as always-present arrays, so fill the defaults here at the IPC
+// boundary rather than making every consumer defensive.
+function normalizeCase(c: TestCase): TestCase {
+  return {
+    ...c,
+    tags: c.tags ?? [],
+    references: c.references ?? [],
+    steps: c.steps ?? [],
+    preconditions: c.preconditions ?? [],
+    automation: c.automation ?? { state: "none" },
+  };
+}
+
 export const api = {
   inspectRepo: (path: string) => invoke<RepoInfo>("inspect_repo", { path }),
   cloneRepo: (url: string, dest: string) =>
@@ -61,10 +76,12 @@ export const api = {
 
   listSuites: () => invoke<SuiteTree[]>("list_suites"),
   listCases: () => invoke<CaseSummary[]>("list_cases"),
-  getCase: (id: string) => invoke<TestCase>("get_case", { id }),
-  saveCase: (testCase: TestCase) => invoke<TestCase>("save_case", { case: testCase }),
+  getCase: (id: string) =>
+    invoke<TestCase>("get_case", { id }).then(normalizeCase),
+  saveCase: (testCase: TestCase) =>
+    invoke<TestCase>("save_case", { case: testCase }).then(normalizeCase),
   createCase: (suite: string, title: string) =>
-    invoke<TestCase>("create_case", { suite, title }),
+    invoke<TestCase>("create_case", { suite, title }).then(normalizeCase),
 
   gitStatus: () => invoke<GitStatus>("git_status"),
   listBranches: () => invoke<string[]>("list_branches"),

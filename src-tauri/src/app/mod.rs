@@ -160,7 +160,7 @@ pub fn open_project(path: String, state: tauri::State<AppState>) -> Result<Proje
 }
 
 #[tauri::command]
-pub fn current_project(state: tauri::State<AppState>) -> Result<Option<ProjectInfo>> {
+pub async fn current_project(state: tauri::State<'_, AppState>) -> Result<Option<ProjectInfo>> {
     let guard = state.open.lock().unwrap();
     let Some(open) = guard.as_ref() else {
         return Ok(None);
@@ -170,30 +170,30 @@ pub fn current_project(state: tauri::State<AppState>) -> Result<Option<ProjectIn
 }
 
 #[tauri::command]
-pub fn list_suites(state: tauri::State<AppState>) -> Result<Vec<SuiteTree>> {
+pub async fn list_suites(state: tauri::State<'_, AppState>) -> Result<Vec<SuiteTree>> {
     repo::list_suites(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn list_cases(state: tauri::State<AppState>) -> Result<Vec<CaseSummary>> {
+pub async fn list_cases(state: tauri::State<'_, AppState>) -> Result<Vec<CaseSummary>> {
     repo::list_cases(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn get_case(id: String, state: tauri::State<AppState>) -> Result<TestCase> {
+pub async fn get_case(id: String, state: tauri::State<'_, AppState>) -> Result<TestCase> {
     repo::load_case(&state.paths()?, &id)
 }
 
 #[tauri::command]
-pub fn save_case(case: TestCase, state: tauri::State<AppState>) -> Result<TestCase> {
+pub async fn save_case(case: TestCase, state: tauri::State<'_, AppState>) -> Result<TestCase> {
     repo::save_case(&state.paths()?, &case)
 }
 
 #[tauri::command]
-pub fn create_case(
+pub async fn create_case(
     suite: String,
     title: String,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<TestCase> {
     let paths = state.paths()?;
     let id = repo::next_case_id(&paths)?;
@@ -203,21 +203,21 @@ pub fn create_case(
 }
 
 #[tauri::command]
-pub fn git_status(state: tauri::State<AppState>) -> Result<git::GitStatus> {
+pub async fn git_status(state: tauri::State<'_, AppState>) -> Result<git::GitStatus> {
     let paths = state.paths()?;
     let repo = git::open(&paths.root)?;
     git::status(&repo)
 }
 
 #[tauri::command]
-pub fn list_branches(state: tauri::State<AppState>) -> Result<Vec<String>> {
+pub async fn list_branches(state: tauri::State<'_, AppState>) -> Result<Vec<String>> {
     let paths = state.paths()?;
     let repo = git::open(&paths.root)?;
     git::branches(&repo)
 }
 
 #[tauri::command]
-pub fn switch_branch(name: String, state: tauri::State<AppState>) -> Result<git::GitStatus> {
+pub async fn switch_branch(name: String, state: tauri::State<'_, AppState>) -> Result<git::GitStatus> {
     let paths = state.paths()?;
     let repo = git::open(&paths.root)?;
     git::checkout_branch(&repo, &name)?;
@@ -227,24 +227,24 @@ pub fn switch_branch(name: String, state: tauri::State<AppState>) -> Result<git:
 // ---- Runs & results -----------------------------------------------------------
 
 #[tauri::command]
-pub fn list_runs(state: tauri::State<AppState>) -> Result<Vec<RunSummary>> {
+pub async fn list_runs(state: tauri::State<'_, AppState>) -> Result<Vec<RunSummary>> {
     runs::list_runs(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn get_run(id: String, state: tauri::State<AppState>) -> Result<RunDetail> {
+pub async fn get_run(id: String, state: tauri::State<'_, AppState>) -> Result<RunDetail> {
     runs::load_run(&state.paths()?, &id)
 }
 
 /// Resolve a run definition to the cases it would include, without saving.
 /// Powers the live preview in the New Run builder.
 #[tauri::command]
-pub fn preview_run(
+pub async fn preview_run(
     mode: IncludeMode,
     query: Option<String>,
     suites: Vec<String>,
     cases: Vec<String>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Vec<CaseSummary>> {
     let paths = state.paths()?;
     let all = repo::list_cases(&paths)?;
@@ -257,7 +257,7 @@ pub fn preview_run(
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn create_run(
+pub async fn create_run(
     name: String,
     milestone: Option<String>,
     configuration: Vec<String>,
@@ -267,7 +267,7 @@ pub fn create_run(
     query: Option<String>,
     suites: Vec<String>,
     cases: Vec<String>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Run> {
     let paths = state.paths()?;
     runs::create_run(
@@ -287,13 +287,13 @@ pub fn create_run(
 }
 
 #[tauri::command]
-pub fn set_result(
+pub async fn set_result(
     run_id: String,
     case_id: String,
     status: ResultStatus,
     comment: Option<String>,
     executed_by: Option<String>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<RunResult> {
     runs::set_result(
         &state.paths()?,
@@ -307,21 +307,21 @@ pub fn set_result(
 }
 
 #[tauri::command]
-pub fn set_run_state(
+pub async fn set_run_state(
     run_id: String,
     run_state: RunState,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<Run> {
     runs::set_run_state(&state.paths()?, &run_id, run_state)
 }
 
 #[tauri::command]
-pub fn list_milestones(state: tauri::State<AppState>) -> Result<Vec<Milestone>> {
+pub async fn list_milestones(state: tauri::State<'_, AppState>) -> Result<Vec<Milestone>> {
     runs::list_milestones(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn list_configurations(state: tauri::State<AppState>) -> Result<Vec<Configuration>> {
+pub async fn list_configurations(state: tauri::State<'_, AppState>) -> Result<Vec<Configuration>> {
     runs::list_configurations(&state.paths()?)
 }
 
@@ -329,7 +329,7 @@ pub fn list_configurations(state: tauri::State<AppState>) -> Result<Vec<Configur
 
 /// Detected Playwright install info for the open repo.
 #[tauri::command]
-pub fn playwright_info(state: tauri::State<AppState>) -> Result<PlaywrightInfo> {
+pub async fn playwright_info(state: tauri::State<'_, AppState>) -> Result<PlaywrightInfo> {
     Ok(playwright::detect(&state.paths()?.root))
 }
 
@@ -451,13 +451,13 @@ pub fn list_agents() -> Vec<AgentAvailability> {
 /// The coverage & linking view: every case's automation state, orphan specs,
 /// and roll-up metrics.
 #[tauri::command]
-pub fn coverage(state: tauri::State<AppState>) -> Result<Coverage> {
+pub async fn coverage(state: tauri::State<'_, AppState>) -> Result<Coverage> {
     automation::coverage(&state.paths()?)
 }
 
 /// The repo context TestHound would feed an agent when generating a case's spec.
 #[tauri::command]
-pub fn automation_context(id: String, state: tauri::State<AppState>) -> Result<RepoContext> {
+pub async fn automation_context(id: String, state: tauri::State<'_, AppState>) -> Result<RepoContext> {
     let paths = state.paths()?;
     let case = repo::load_case(&paths, &id)?;
     Ok(automation::detect_context(&paths, &case))
@@ -475,7 +475,7 @@ pub struct FileDiff {
 }
 
 #[tauri::command]
-pub fn file_diff(path: String, state: tauri::State<AppState>) -> Result<FileDiff> {
+pub async fn file_diff(path: String, state: tauri::State<'_, AppState>) -> Result<FileDiff> {
     let paths = state.paths()?;
     let repo = git::open(&paths.root)?;
     let old = git::read_head_file(&repo, &path);
@@ -696,7 +696,7 @@ pub struct SuiteHealth {
 }
 
 #[tauri::command]
-pub fn dashboard(state: tauri::State<AppState>) -> Result<Dashboard> {
+pub async fn dashboard(state: tauri::State<'_, AppState>) -> Result<Dashboard> {
     use crate::domain::{AutomationState, CaseStatus, Priority};
     let paths = state.paths()?;
     let cases = repo::list_cases(&paths)?;
@@ -792,7 +792,7 @@ pub fn dashboard(state: tauri::State<AppState>) -> Result<Dashboard> {
 /// All conflicts in the index, with a semantic field/step merge for each case
 /// file and a plain list of the rest.
 #[tauri::command]
-pub fn list_conflicts(state: tauri::State<AppState>) -> Result<Conflicts> {
+pub async fn list_conflicts(state: tauri::State<'_, AppState>) -> Result<Conflicts> {
     let paths = state.paths()?;
     let repo = git::open(&paths.root)?;
     merge::conflicts(&repo)
@@ -828,31 +828,31 @@ pub fn resolve_case_delete(path: String, state: tauri::State<AppState>) -> Resul
 /// Case ids claimed by more than one file (a merge artifact when two branches
 /// minted the same `TC-####`).
 #[tauri::command]
-pub fn id_collisions(state: tauri::State<AppState>) -> Result<Vec<IdCollision>> {
+pub async fn id_collisions(state: tauri::State<'_, AppState>) -> Result<Vec<IdCollision>> {
     merge::detect_id_collisions(&state.paths()?)
 }
 
 /// Renumber the case at `path` to a fresh id, relinking its references. Returns
 /// the new id.
 #[tauri::command]
-pub fn renumber_case(path: String, state: tauri::State<AppState>) -> Result<String> {
+pub async fn renumber_case(path: String, state: tauri::State<'_, AppState>) -> Result<String> {
     merge::renumber_case(&state.paths()?, &path)
 }
 
 // ---- Git LFS evidence (docs/04-git-storage.md §4.9) ---------------------------
 
 #[tauri::command]
-pub fn lfs_status(state: tauri::State<AppState>) -> Result<LfsStatus> {
+pub async fn lfs_status(state: tauri::State<'_, AppState>) -> Result<LfsStatus> {
     lfs::status(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn enable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
+pub async fn enable_lfs(state: tauri::State<'_, AppState>) -> Result<LfsStatus> {
     lfs::enable(&state.paths()?)
 }
 
 #[tauri::command]
-pub fn disable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
+pub async fn disable_lfs(state: tauri::State<'_, AppState>) -> Result<LfsStatus> {
     lfs::disable(&state.paths()?)
 }
 
@@ -861,10 +861,10 @@ pub fn disable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
 /// Stage exactly the selected files and commit them with `message`. Returns the
 /// refreshed status so the changes panel updates in place.
 #[tauri::command]
-pub fn commit_changes(
+pub async fn commit_changes(
     message: String,
     files: Vec<String>,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<git::GitStatus> {
     let paths = state.paths()?;
     if message.trim().is_empty() {
@@ -878,13 +878,13 @@ pub fn commit_changes(
 /// Push the current branch to its upstream. Shells out to `git` so credential
 /// helpers apply.
 #[tauri::command]
-pub fn push_changes(state: tauri::State<AppState>) -> Result<String> {
+pub async fn push_changes(state: tauri::State<'_, AppState>) -> Result<String> {
     git::push(&state.paths()?.root)
 }
 
 /// Fast-forward pull then push, for the repo-bar Sync button.
 #[tauri::command]
-pub fn sync_repo(state: tauri::State<AppState>) -> Result<String> {
+pub async fn sync_repo(state: tauri::State<'_, AppState>) -> Result<String> {
     git::sync(&state.paths()?.root)
 }
 
@@ -901,7 +901,7 @@ fn case_path(paths: &Paths, id: &str) -> Result<String> {
 
 /// The commit timeline for a case file (newest first).
 #[tauri::command]
-pub fn case_history(id: String, state: tauri::State<AppState>) -> Result<Vec<git::CommitInfo>> {
+pub async fn case_history(id: String, state: tauri::State<'_, AppState>) -> Result<Vec<git::CommitInfo>> {
     let paths = state.paths()?;
     let rel = case_path(&paths, &id)?;
     let repo = git::open(&paths.root)?;
@@ -939,10 +939,10 @@ fn behaviour_lines(s: &str) -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn case_commit_diff(
+pub async fn case_commit_diff(
     id: String,
     hash: String,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<CaseCommitDiff> {
     let paths = state.paths()?;
     let rel = case_path(&paths, &id)?;
@@ -971,7 +971,7 @@ pub fn case_commit_diff(
 
 /// Per-line blame for a case's working-tree version.
 #[tauri::command]
-pub fn case_blame(id: String, state: tauri::State<AppState>) -> Result<Vec<git::BlameLine>> {
+pub async fn case_blame(id: String, state: tauri::State<'_, AppState>) -> Result<Vec<git::BlameLine>> {
     let paths = state.paths()?;
     let rel = case_path(&paths, &id)?;
     let repo = git::open(&paths.root)?;
@@ -981,10 +981,10 @@ pub fn case_blame(id: String, state: tauri::State<AppState>) -> Result<Vec<git::
 /// Restore a case file to its contents at `hash`, leaving the change unstaged in
 /// the working tree for review. Returns the reloaded case.
 #[tauri::command]
-pub fn restore_case_version(
+pub async fn restore_case_version(
     id: String,
     hash: String,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<TestCase> {
     let paths = state.paths()?;
     let rel = case_path(&paths, &id)?;

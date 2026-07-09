@@ -3,6 +3,7 @@ import { api } from "@/lib/ipc";
 import { useSession } from "@/store/session";
 import { Onboarding } from "@/screens/Onboarding";
 import { AppShell } from "@/components/shell/AppShell";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export default function App() {
   const project = useSession((s) => s.project);
@@ -26,5 +27,9 @@ export default function App() {
     return <Onboarding onReady={setProject} />;
   }
 
-  return <AppShell />;
+  return (
+    <ErrorBoundary>
+      <AppShell />
+    </ErrorBoundary>
+  );
 }

@@ -40,3 +40,12 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
+# Keep `pnpm app:dev` responsive: optimize dependencies (git2, serde, etc.)
+# fully once, and this crate lightly, so backend calls aren't 10-50x slower
+# than release while incremental rebuilds stay fast.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

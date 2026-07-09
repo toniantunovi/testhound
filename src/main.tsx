@@ -9,7 +9,7 @@ const queryClient = new QueryClient({
     queries: {
       retry: false,
       refetchOnWindowFocus: false,
-      staleTime: 2000,
+      staleTime: 30000,
     },
   },
 });
