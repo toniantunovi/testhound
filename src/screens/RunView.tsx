@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check } from "lucide-react";
-import { api } from "@/lib/ipc";
+import { ArrowLeft, Check, FileArchive, Loader2, Play } from "lucide-react";
+import { api, errMsg } from "@/lib/ipc";
 import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
 import { useSession } from "@/store/session";
+import { useActivity } from "@/store/activity";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import {
   AutomationBadge,
@@ -26,12 +27,23 @@ const STATUS_KEYS: { status: ResultStatus; label: string; className: string }[] 
 export function RunView() {
   const id = useSession((s) => s.openRunId);
   const navigate = useSession((s) => s.navigate);
+  const runningRunId = useActivity((s) => s.runningRunId);
   const qc = useQueryClient();
 
   const { data } = useQuery({
     queryKey: ["run", id],
     queryFn: () => api.getRun(id!),
     enabled: !!id,
+  });
+
+  const { data: pw } = useQuery({
+    queryKey: ["playwright-info"],
+    queryFn: api.playwrightInfo,
+  });
+
+  const runAutomated = useMutation({
+    mutationFn: () => api.runPlaywright(id!),
+    onError: (e) => useActivity.getState().push(`x ${errMsg(e)}`),
   });
 
   const invalidate = () => {
@@ -67,6 +79,10 @@ export function RunView() {
   const executed = progress.total - progress.untested;
   const passRate =
     executed === 0 ? 0 : Math.round((progress.passed / executed) * 100);
+  const running = runningRunId === run.id;
+  const automatable = rows.filter(
+    (r) => r.automationState === "linked" || r.automationState === "drifted",
+  ).length;
 
   return (
     <div className="flex h-full flex-col">
@@ -81,6 +97,36 @@ export function RunView() {
         <span className="truncate text-base font-semibold">{run.name}</span>
         <RunStateBadge state={run.state} />
         <div className="flex-1" />
+        {pw?.detected ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={running || automatable === 0}
+            title={
+              automatable === 0
+                ? "No cases in this run have a linked spec"
+                : "Execute linked Playwright specs and ingest results"
+            }
+            onClick={() => runAutomated.mutate()}
+          >
+            {running ? (
+              <>
+                <Loader2 size={13} className="animate-spin" /> Running…
+              </>
+            ) : (
+              <>
+                <Play size={13} /> Run automated
+              </>
+            )}
+          </Button>
+        ) : (
+          <span
+            className="text-[11px] text-text-muted"
+            title="Add a playwright.config to the repo root to enable automated runs"
+          >
+            Playwright not detected
+          </span>
+        )}
         {run.state !== "complete" && (
           <Button size="sm" onClick={() => setState.mutate("complete")}>
             <Check size={13} /> Mark complete
@@ -190,6 +236,12 @@ function CaseRow({
             {row.section ? ` / ${row.section}` : ""}
           </span>
           <AutomationBadge state={row.automationState} />
+          {row.source === "automated" && (
+            <span className="inline-flex items-center gap-1 rounded bg-bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+              <Play size={9} /> auto
+              {row.elapsed ? ` · ${row.elapsed}` : ""}
+            </span>
+          )}
         </div>
         <input
           value={comment}
@@ -200,6 +252,38 @@ function CaseRow({
           placeholder="Add a comment"
           className="mt-2 h-7 w-full max-w-md rounded-control border border-border-subtle bg-bg-base px-2 text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
         />
+        {row.evidence.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            {row.evidence.map((path) => {
+              const name = path.split("/").pop() ?? path;
+              const isTrace = path.endsWith(".zip");
+              return isTrace ? (
+                <button
+                  key={path}
+                  onClick={() =>
+                    api
+                      .openTrace(path)
+                      .catch((e) =>
+                        useActivity.getState().push(`x ${errMsg(e)}`),
+                      )
+                  }
+                  title={path}
+                  className="inline-flex items-center gap-1 rounded-control border border-border-subtle px-1.5 py-0.5 text-[11px] text-text-secondary hover:border-border-strong hover:text-text-primary"
+                >
+                  <FileArchive size={11} /> Open trace
+                </button>
+              ) : (
+                <span
+                  key={path}
+                  title={path}
+                  className="inline-flex max-w-[180px] items-center gap-1 truncate rounded-control bg-bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+                >
+                  {name}
+                </span>
+              );
+            })}
+          </div>
+        )}
       </td>
       <td className="py-3">
         <PriorityBadge priority={row.priority} />

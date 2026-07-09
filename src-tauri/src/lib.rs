@@ -6,6 +6,7 @@ pub mod app;
 pub mod domain;
 pub mod error;
 pub mod git;
+pub mod playwright;
 pub mod repo;
 
 use app::AppState;
@@ -38,6 +39,9 @@ pub fn run() {
             app::set_run_state,
             app::list_milestones,
             app::list_configurations,
+            app::playwright_info,
+            app::run_playwright,
+            app::open_trace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TestHound");

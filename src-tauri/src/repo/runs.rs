@@ -112,6 +112,9 @@ pub struct RunResultRow {
     pub comment: Option<String>,
     pub executed_by: Option<String>,
     pub executed_at: Option<String>,
+    pub elapsed: Option<String>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
     pub attempts: usize,
 }
 
@@ -343,6 +346,8 @@ pub fn load_run(paths: &Paths, id: &str) -> Result<RunDetail> {
             comment: res.and_then(|r| r.comment.clone()),
             executed_by: res.and_then(|r| r.executed_by.clone()),
             executed_at: res.and_then(|r| r.executed_at.clone()),
+            elapsed: res.and_then(|r| r.elapsed.clone()),
+            evidence: res.map(|r| r.evidence.clone()).unwrap_or_default(),
             attempts: res.map(|r| r.history.len()).unwrap_or(0),
         });
     }
@@ -419,17 +424,28 @@ pub fn create_run(paths: &Paths, input: CreateRun) -> Result<Run> {
     Ok(run)
 }
 
+/// One result update. `comment`/`elapsed` are `None` to leave the existing
+/// value, `Some` to set it (an empty comment clears it); `evidence` is `None`
+/// to leave artifacts untouched or `Some` to replace them (a re-run overwrites
+/// the prior run's artifacts).
+#[derive(Debug, Clone)]
+pub struct ResultInput {
+    pub status: ResultStatus,
+    pub source: ResultSource,
+    pub executed_by: Option<String>,
+    pub comment: Option<String>,
+    pub elapsed: Option<String>,
+    pub evidence: Option<Vec<String>>,
+}
+
 /// Record (or overwrite) a case's result within a run, appending to its
-/// history. Passing `comment: Some("")` clears the comment; `None` leaves it.
-/// Recording the first result advances a `planned` run to `in_progress`.
-pub fn set_result(
+/// history. Recording the first result advances a `planned` run to
+/// `in_progress`. Shared by manual recording and automated ingestion.
+pub fn apply_result(
     paths: &Paths,
     run_id: &str,
     case_id: &str,
-    status: ResultStatus,
-    comment: Option<String>,
-    executed_by: Option<String>,
-    source: ResultSource,
+    input: ResultInput,
 ) -> Result<RunResult> {
     let mut run = load_run_meta(paths, run_id)?;
     if !run.includes.cases.iter().any(|c| c == case_id) {
@@ -460,17 +476,23 @@ pub fn set_result(
     };
 
     let now = now_iso();
-    result.status = status;
-    result.source = source;
-    result.executed_by = executed_by.clone();
+    result.status = input.status;
+    result.source = input.source;
+    result.executed_by = input.executed_by.clone();
     result.executed_at = Some(now.clone());
-    if let Some(c) = comment {
+    if let Some(c) = input.comment {
         result.comment = if c.trim().is_empty() { None } else { Some(c) };
+    }
+    if let Some(e) = input.elapsed {
+        result.elapsed = Some(e);
+    }
+    if let Some(ev) = input.evidence {
+        result.evidence = ev;
     }
     result.history.push(ResultHistoryEntry {
         at: now,
-        status,
-        by: executed_by,
+        status: input.status,
+        by: input.executed_by,
     });
 
     fs::write(&path, serde_yaml::to_string(&result)?)?;
@@ -481,6 +503,32 @@ pub fn set_result(
         write_run(paths, &run)?;
     }
     Ok(result)
+}
+
+/// Record a manual result. Passing `comment: Some("")` clears the comment;
+/// `None` leaves it. Thin wrapper over [`apply_result`].
+pub fn set_result(
+    paths: &Paths,
+    run_id: &str,
+    case_id: &str,
+    status: ResultStatus,
+    comment: Option<String>,
+    executed_by: Option<String>,
+    source: ResultSource,
+) -> Result<RunResult> {
+    apply_result(
+        paths,
+        run_id,
+        case_id,
+        ResultInput {
+            status,
+            source,
+            executed_by,
+            comment,
+            elapsed: None,
+            evidence: None,
+        },
+    )
 }
 
 /// Update a run's lifecycle state.

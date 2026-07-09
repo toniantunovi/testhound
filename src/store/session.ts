@@ -31,6 +31,7 @@ interface SessionState {
   openRun: (id: string) => void;
   newRun: () => void;
   toggleActivity: () => void;
+  setActivity: (open: boolean) => void;
 }
 
 export const useSession = create<SessionState>((set) => ({
@@ -50,4 +51,5 @@ export const useSession = create<SessionState>((set) => ({
   openRun: (openRunId) => set({ openRunId, view: "run-view" }),
   newRun: () => set({ view: "new-run" }),
   toggleActivity: () => set((s) => ({ activityOpen: !s.activityOpen })),
+  setActivity: (activityOpen) => set({ activityOpen }),
 }));

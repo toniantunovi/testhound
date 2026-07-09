@@ -1,6 +1,7 @@
 import { RepoBar } from "./RepoBar";
 import { Sidebar } from "./Sidebar";
 import { ActivityConsole } from "./ActivityConsole";
+import { useRunEvents } from "@/lib/useRunEvents";
 import { useSession } from "@/store/session";
 import { Dashboard } from "@/screens/Dashboard";
 import { Cases } from "@/screens/Cases";
@@ -12,6 +13,7 @@ import { Placeholder } from "@/screens/Placeholder";
 
 export function AppShell() {
   const view = useSession((s) => s.view);
+  useRunEvents();
 
   return (
     <div className="flex h-full flex-col overflow-hidden">

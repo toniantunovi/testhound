@@ -1,5 +1,6 @@
 // Typed wrappers over Tauri IPC commands. One function per Rust #[tauri::command].
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   CaseSummary,
   Configuration,
@@ -7,11 +8,16 @@ import type {
   GitStatus,
   IncludeMode,
   Milestone,
+  PlaywrightInfo,
   ProjectInfo,
   RepoInfo,
   ResultStatus,
   Run,
   RunDetail,
+  RunFinishedEvent,
+  RunLogEvent,
+  RunProgressEvent,
+  RunStartedEvent,
   RunSummary,
   SuiteTree,
   TestCase,
@@ -79,6 +85,24 @@ export const api = {
 
   listMilestones: () => invoke<Milestone[]>("list_milestones"),
   listConfigurations: () => invoke<Configuration[]>("list_configurations"),
+
+  playwrightInfo: () => invoke<PlaywrightInfo>("playwright_info"),
+  runPlaywright: (runId: string) => invoke<void>("run_playwright", { runId }),
+  openTrace: (path: string) => invoke<void>("open_trace", { path }),
+};
+
+// ---- Playwright run lifecycle events -----------------------------------------
+// The Rust side streams these while a run executes (docs/02-architecture.md §2.4).
+
+export const runEvents = {
+  onStarted: (cb: (e: RunStartedEvent) => void): Promise<UnlistenFn> =>
+    listen<RunStartedEvent>("run://started", (e) => cb(e.payload)),
+  onLog: (cb: (e: RunLogEvent) => void): Promise<UnlistenFn> =>
+    listen<RunLogEvent>("run://log", (e) => cb(e.payload)),
+  onProgress: (cb: (e: RunProgressEvent) => void): Promise<UnlistenFn> =>
+    listen<RunProgressEvent>("run://progress", (e) => cb(e.payload)),
+  onFinished: (cb: (e: RunFinishedEvent) => void): Promise<UnlistenFn> =>
+    listen<RunFinishedEvent>("run://finished", (e) => cb(e.payload)),
 };
 
 /** Normalize an IPC error (a plain string from the Rust side) to a message. */

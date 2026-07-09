@@ -189,6 +189,8 @@ export interface RunResultRow {
   comment: string | null;
   executedBy: string | null;
   executedAt: string | null;
+  elapsed: string | null;
+  evidence: string[];
   attempts: number;
 }
 
@@ -215,6 +217,51 @@ export interface Configuration {
   id: string;
   name: string;
   options: ConfigOption[];
+}
+
+// ---- Playwright execution ----------------------------------------------------
+
+export interface PlaywrightInfo {
+  detected: boolean;
+  config: string | null;
+  localBinary: boolean;
+}
+
+export interface CaseOutcome {
+  case: string;
+  status: ResultStatus;
+  elapsed: string | null;
+  evidence: string[];
+}
+
+export interface PlaywrightSummary {
+  runId: string;
+  updated: CaseOutcome[];
+  skipped: string[];
+  unmapped: string[];
+}
+
+export interface RunLogEvent {
+  runId: string;
+  line: string;
+}
+
+export interface RunStartedEvent {
+  runId: string;
+  cases: number;
+}
+
+export interface RunProgressEvent {
+  runId: string;
+  case: string;
+  status: ResultStatus;
+  elapsed: string | null;
+}
+
+export interface RunFinishedEvent {
+  runId: string;
+  summary: PlaywrightSummary | null;
+  error: string | null;
 }
 
 export interface Dashboard {

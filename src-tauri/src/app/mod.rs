@@ -4,6 +4,7 @@ pub mod sample;
 
 use crate::error::{Error, Result};
 use crate::git;
+use crate::playwright::{self, PlaywrightInfo};
 use crate::repo::runs::{self, CreateRun, RunDetail, RunSummary};
 use crate::repo::{self, CaseSummary, Paths, SuiteTree};
 use crate::domain::{
@@ -13,6 +14,7 @@ use crate::domain::{
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
 
 /// The currently open project. libgit2's `Repository` is not thread-safe, so we
 /// store only paths here and open the repo on demand inside each command.
@@ -63,17 +65,7 @@ pub struct ProjectInfo {
 }
 
 fn detect_playwright(repo_root: &Path) -> bool {
-    for f in [
-        "playwright.config.ts",
-        "playwright.config.js",
-        "playwright.config.mjs",
-        "playwright.config.cts",
-    ] {
-        if repo_root.join(f).is_file() {
-            return true;
-        }
-    }
-    false
+    playwright::detect(repo_root).detected
 }
 
 fn inspect(repo_root: &Path) -> RepoInfo {
@@ -324,6 +316,121 @@ pub fn list_milestones(state: tauri::State<AppState>) -> Result<Vec<Milestone>> 
 #[tauri::command]
 pub fn list_configurations(state: tauri::State<AppState>) -> Result<Vec<Configuration>> {
     runs::list_configurations(&state.paths()?)
+}
+
+// ---- Playwright execution -----------------------------------------------------
+
+/// Detected Playwright install info for the open repo.
+#[tauri::command]
+pub fn playwright_info(state: tauri::State<AppState>) -> Result<PlaywrightInfo> {
+    Ok(playwright::detect(&state.paths()?.root))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LogEvent {
+    run_id: String,
+    line: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StartedEvent {
+    run_id: String,
+    cases: usize,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgressEvent {
+    run_id: String,
+    case: String,
+    status: ResultStatus,
+    elapsed: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FinishedEvent {
+    run_id: String,
+    summary: Option<playwright::Summary>,
+    error: Option<String>,
+}
+
+/// Run the Playwright specs linked to a run's cases, streaming lifecycle to the
+/// UI and ingesting results as `source: automated`. Returns immediately; the
+/// work runs on a background thread and reports via `run://*` events
+/// (docs/02-architecture.md §2.4).
+#[tauri::command]
+pub fn run_playwright(run_id: String, app: AppHandle, state: tauri::State<AppState>) -> Result<()> {
+    let paths = state.paths()?;
+    let run = runs::load_run(&paths, &run_id)?.run;
+    let _ = app.emit(
+        "run://started",
+        StartedEvent {
+            run_id: run_id.clone(),
+            cases: run.includes.cases.len(),
+        },
+    );
+
+    std::thread::spawn(move || {
+        let log_app = app.clone();
+        let log_id = run_id.clone();
+        let result = playwright::execute(&paths, &run, Some("playwright"), |line| {
+            let _ = log_app.emit(
+                "run://log",
+                LogEvent {
+                    run_id: log_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        });
+
+        let finished = match result {
+            Ok(summary) => {
+                for outcome in &summary.updated {
+                    let _ = app.emit(
+                        "run://progress",
+                        ProgressEvent {
+                            run_id: run_id.clone(),
+                            case: outcome.case.clone(),
+                            status: outcome.status,
+                            elapsed: outcome.elapsed.clone(),
+                        },
+                    );
+                }
+                FinishedEvent {
+                    run_id: run_id.clone(),
+                    summary: Some(summary),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                let _ = app.emit(
+                    "run://log",
+                    LogEvent {
+                        run_id: run_id.clone(),
+                        line: format!("error: {msg}"),
+                    },
+                );
+                FinishedEvent {
+                    run_id: run_id.clone(),
+                    summary: None,
+                    error: Some(msg),
+                }
+            }
+        };
+        let _ = app.emit("run://finished", finished);
+    });
+
+    Ok(())
+}
+
+/// Open a Playwright trace artifact in the trace viewer.
+#[tauri::command]
+pub fn open_trace(path: String, state: tauri::State<AppState>) -> Result<()> {
+    playwright::show_trace(&state.paths()?, &path)
 }
 
 /// Aggregate dashboard KPIs derived from the file store (cheap, on demand).

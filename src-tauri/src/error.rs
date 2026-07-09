@@ -34,6 +34,9 @@ pub enum Error {
     #[error("invalid repository format: {0}")]
     InvalidFormat(String),
 
+    #[error("playwright error: {0}")]
+    Playwright(String),
+
     #[error("{0}")]
     Other(String),
 }
