@@ -8,11 +8,14 @@ import type {
   AgentStartedEvent,
   CaseSummary,
   Configuration,
+  Conflicts,
   Coverage,
   Dashboard,
   FileDiff,
   GitStatus,
+  IdCollision,
   IncludeMode,
+  LfsStatus,
   Milestone,
   PlaywrightInfo,
   ProjectInfo,
@@ -26,8 +29,10 @@ import type {
   RunProgressEvent,
   RunStartedEvent,
   RunSummary,
+  Side,
   SuiteTree,
   TestCase,
+  UpdateInfo,
 } from "./types";
 
 export interface CreateRunInput {
@@ -109,6 +114,24 @@ export const api = {
     invoke<TestCase>("accept_generation", { caseId, specs, generator }),
   triageFailure: (runId: string, caseId: string, agentId: string) =>
     invoke<void>("triage_failure", { runId, caseId, agentId }),
+
+  // Collaboration: conflicts, semantic merge, LFS, updates (M5)
+  listConflicts: () => invoke<Conflicts>("list_conflicts"),
+  resolveCaseConflict: (path: string, picks: Record<string, Side>) =>
+    invoke<TestCase>("resolve_case_conflict", { path, picks }),
+  resolveCaseKeep: (path: string, keep: Side) =>
+    invoke<TestCase>("resolve_case_keep", { path, keep }),
+  resolveCaseDelete: (path: string) =>
+    invoke<void>("resolve_case_delete", { path }),
+  idCollisions: () => invoke<IdCollision[]>("id_collisions"),
+  renumberCase: (path: string) => invoke<string>("renumber_case", { path }),
+
+  lfsStatus: () => invoke<LfsStatus>("lfs_status"),
+  enableLfs: () => invoke<LfsStatus>("enable_lfs"),
+  disableLfs: () => invoke<LfsStatus>("disable_lfs"),
+
+  checkForUpdate: () => invoke<UpdateInfo>("check_for_update"),
+  installUpdate: () => invoke<void>("install_update"),
 };
 
 // ---- Playwright run lifecycle events -----------------------------------------

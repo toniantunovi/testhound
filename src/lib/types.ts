@@ -335,6 +335,58 @@ export interface AgentFinishedEvent {
   error: string | null;
 }
 
+// ---- Collaboration: conflicts, semantic merge, LFS, updates (M5) -------------
+
+export type Side = "base" | "ours" | "theirs";
+
+export interface FieldMerge {
+  key: string;
+  label: string;
+  base: string | null;
+  ours: string | null;
+  theirs: string | null;
+  conflict: boolean;
+  suggested: Side;
+}
+
+export interface CaseMerge {
+  path: string;
+  id: string;
+  title: string;
+  fields: FieldMerge[];
+  hasConflict: boolean;
+  deletedSide?: Side;
+}
+
+export interface RawConflict {
+  path: string;
+}
+
+export interface Conflicts {
+  cases: CaseMerge[];
+  other: RawConflict[];
+}
+
+export interface IdCollision {
+  id: string;
+  paths: string[];
+}
+
+export interface LfsStatus {
+  lfsAvailable: boolean;
+  enabled: boolean;
+  patterns: string[];
+}
+
+export interface UpdateInfo {
+  available: boolean;
+  currentVersion: string;
+  version: string | null;
+  notes: string | null;
+  /** Set when the updater is not configured or the check failed. */
+  error: string | null;
+}
+
 export interface Dashboard {
   activeCases: number;
   totalCases: number;

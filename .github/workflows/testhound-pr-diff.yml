@@ -1,0 +1,32 @@
+name: TestHound PR diff
+
+# Renders a human-readable summary of test-case changes as a PR comment
+# (docs/04-git-storage.md §4.4). Runs whenever a PR touches case files.
+
+on:
+  pull_request:
+    paths:
+      - "**/suites/**/cases/**/*.md"
+      - "**/testhound/**/*.md"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  case-diff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Render TestHound case diff
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/testhound-diff.mjs

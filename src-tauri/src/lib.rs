@@ -7,6 +7,8 @@ pub mod automation;
 pub mod domain;
 pub mod error;
 pub mod git;
+pub mod lfs;
+pub mod merge;
 pub mod playwright;
 pub mod repo;
 
@@ -16,6 +18,7 @@ use app::AppState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             app::inspect_repo,
@@ -50,6 +53,17 @@ pub fn run() {
             app::accept_generation,
             app::generate_spec,
             app::triage_failure,
+            app::list_conflicts,
+            app::resolve_case_conflict,
+            app::resolve_case_keep,
+            app::resolve_case_delete,
+            app::id_collisions,
+            app::renumber_case,
+            app::lfs_status,
+            app::enable_lfs,
+            app::disable_lfs,
+            app::check_for_update,
+            app::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running TestHound");

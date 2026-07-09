@@ -4,6 +4,7 @@ import {
   ArrowUp,
   ChevronDown,
   GitBranch,
+  GitMerge,
   RefreshCw,
   Search,
 } from "lucide-react";
@@ -13,12 +14,21 @@ import { cn } from "@/lib/utils";
 
 export function RepoBar() {
   const project = useSession((s) => s.project);
+  const navigate = useSession((s) => s.navigate);
   const { data: git } = useQuery({
     queryKey: ["git-status"],
     queryFn: api.gitStatus,
     refetchInterval: 5000,
     enabled: !!project,
   });
+  const { data: conflicts } = useQuery({
+    queryKey: ["conflicts"],
+    queryFn: api.listConflicts,
+    refetchInterval: 5000,
+    enabled: !!project,
+  });
+  const conflictCount =
+    (conflicts?.cases.length ?? 0) + (conflicts?.other.length ?? 0);
 
   return (
     <header className="th-drag flex h-11 shrink-0 items-center gap-3 border-b border-border-subtle bg-bg-surface px-3 pl-20">
@@ -63,6 +73,18 @@ export function RepoBar() {
           title={`${git.changed.length} uncommitted change(s)`}
           className="h-1.5 w-1.5 rounded-full bg-status-drifted"
         />
+      )}
+
+      {/* Conflict resolver entry point */}
+      {conflictCount > 0 && (
+        <button
+          onClick={() => navigate("merge")}
+          title="Resolve merge conflicts"
+          className="th-no-drag flex items-center gap-1.5 rounded-control border border-status-failed/30 bg-status-failed/10 px-2 py-1 text-xs font-medium text-status-failed hover:bg-status-failed/20"
+        >
+          <GitMerge size={12} />
+          {conflictCount} conflict{conflictCount === 1 ? "" : "s"}
+        </button>
       )}
 
       <div className="flex-1" />

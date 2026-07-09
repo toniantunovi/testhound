@@ -9,6 +9,7 @@ export type View =
   | "new-run"
   | "run-view"
   | "automation"
+  | "merge"
   | "reports"
   | "settings";
 

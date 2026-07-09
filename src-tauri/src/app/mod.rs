@@ -9,6 +9,8 @@ use crate::automation::{
 };
 use crate::error::{Error, Result};
 use crate::git;
+use crate::lfs::{self, LfsStatus};
+use crate::merge::{self, Conflicts, IdCollision, Side};
 use crate::playwright::{self, PlaywrightInfo};
 use crate::repo::runs::{self, CreateRun, RunDetail, RunSummary};
 use crate::repo::{self, CaseSummary, Paths, SuiteTree};
@@ -783,4 +785,141 @@ pub fn dashboard(state: tauri::State<AppState>) -> Result<Dashboard> {
         runs,
         pass_rate_trend: trend,
     })
+}
+
+// ---- Conflicts & semantic merge (docs/04-git-storage.md §4.6, roadmap M5) ------
+
+/// All conflicts in the index, with a semantic field/step merge for each case
+/// file and a plain list of the rest.
+#[tauri::command]
+pub fn list_conflicts(state: tauri::State<AppState>) -> Result<Conflicts> {
+    let paths = state.paths()?;
+    let repo = git::open(&paths.root)?;
+    merge::conflicts(&repo)
+}
+
+/// Resolve a conflicted case file by picking a side per field. `picks` maps a
+/// field key to `base`/`ours`/`theirs`; omitted fields use the suggested side.
+#[tauri::command]
+pub fn resolve_case_conflict(
+    path: String,
+    picks: std::collections::BTreeMap<String, Side>,
+    state: tauri::State<AppState>,
+) -> Result<TestCase> {
+    merge::resolve_case(&state.paths()?, &path, &picks)
+}
+
+/// Resolve a modify/delete conflict by keeping the modified side.
+#[tauri::command]
+pub fn resolve_case_keep(
+    path: String,
+    keep: Side,
+    state: tauri::State<AppState>,
+) -> Result<TestCase> {
+    merge::resolve_keep(&state.paths()?, &path, keep)
+}
+
+/// Resolve a modify/delete conflict by accepting the deletion.
+#[tauri::command]
+pub fn resolve_case_delete(path: String, state: tauri::State<AppState>) -> Result<()> {
+    merge::resolve_delete(&state.paths()?, &path)
+}
+
+/// Case ids claimed by more than one file (a merge artifact when two branches
+/// minted the same `TC-####`).
+#[tauri::command]
+pub fn id_collisions(state: tauri::State<AppState>) -> Result<Vec<IdCollision>> {
+    merge::detect_id_collisions(&state.paths()?)
+}
+
+/// Renumber the case at `path` to a fresh id, relinking its references. Returns
+/// the new id.
+#[tauri::command]
+pub fn renumber_case(path: String, state: tauri::State<AppState>) -> Result<String> {
+    merge::renumber_case(&state.paths()?, &path)
+}
+
+// ---- Git LFS evidence (docs/04-git-storage.md §4.9) ---------------------------
+
+#[tauri::command]
+pub fn lfs_status(state: tauri::State<AppState>) -> Result<LfsStatus> {
+    lfs::status(&state.paths()?)
+}
+
+#[tauri::command]
+pub fn enable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
+    lfs::enable(&state.paths()?)
+}
+
+#[tauri::command]
+pub fn disable_lfs(state: tauri::State<AppState>) -> Result<LfsStatus> {
+    lfs::disable(&state.paths()?)
+}
+
+// ---- Auto-update (roadmap M5) -------------------------------------------------
+
+/// The result of checking the signed release feed for a newer version.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateInfo {
+    pub available: bool,
+    pub current_version: String,
+    pub version: Option<String>,
+    pub notes: Option<String>,
+    /// Set when the updater isn't configured or the network check failed, so
+    /// the UI can explain rather than silently show "up to date".
+    pub error: Option<String>,
+}
+
+/// Query the updater endpoint for a newer, signed release. Never errors out to
+/// the UI: a missing config or offline check comes back as `error` so the
+/// Settings screen can render it calmly.
+#[tauri::command]
+pub async fn check_for_update(app: AppHandle) -> Result<UpdateInfo> {
+    use tauri_plugin_updater::UpdaterExt;
+    let current = app.package_info().version.to_string();
+    let mut info = UpdateInfo {
+        available: false,
+        current_version: current,
+        version: None,
+        notes: None,
+        error: None,
+    };
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            info.error = Some(format!("updater not configured: {e}"));
+            return Ok(info);
+        }
+    };
+    match updater.check().await {
+        Ok(Some(update)) => {
+            info.available = true;
+            info.version = Some(update.version.clone());
+            info.notes = update.body.clone();
+        }
+        Ok(None) => {}
+        Err(e) => info.error = Some(e.to_string()),
+    }
+    Ok(info)
+}
+
+/// Download and install the pending update. The caller restarts the app to
+/// apply it.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app
+        .updater()
+        .map_err(|e| Error::Other(format!("updater not configured: {e}")))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?
+        .ok_or_else(|| Error::Other("no update available".into()))?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| Error::Other(e.to_string()))?;
+    Ok(())
 }

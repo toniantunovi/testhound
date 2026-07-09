@@ -10,6 +10,8 @@ import { Runs } from "@/screens/Runs";
 import { NewRun } from "@/screens/NewRun";
 import { RunView } from "@/screens/RunView";
 import { Automation } from "@/screens/Automation";
+import { MergeView } from "@/screens/MergeView";
+import { Settings } from "@/screens/Settings";
 import { GenerationDrawer } from "@/screens/GenerationDrawer";
 import { Placeholder } from "@/screens/Placeholder";
 
@@ -30,18 +32,14 @@ export function AppShell() {
           {view === "new-run" && <NewRun />}
           {view === "run-view" && <RunView />}
           {view === "automation" && <Automation />}
+          {view === "merge" && <MergeView />}
           {view === "reports" && (
             <Placeholder
               title="Reports"
               blurb="Pass rate over time, per-suite health, and flakiness trends derived from Git history."
             />
           )}
-          {view === "settings" && (
-            <Placeholder
-              title="Settings"
-              blurb="Project fields and statuses, automation command, agent runners, and Git preferences."
-            />
-          )}
+          {view === "settings" && <Settings />}
         </main>
       </div>
       <ActivityConsole />
