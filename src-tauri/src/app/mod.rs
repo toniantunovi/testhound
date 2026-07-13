@@ -631,6 +631,50 @@ pub async fn file_diff(path: String, state: tauri::State<'_, AppState>) -> Resul
     })
 }
 
+/// Resolve a repo-relative file path for direct read/write from the UI,
+/// rejecting absolute paths and any traversal outside the repo root.
+fn resolve_repo_file(paths: &Paths, path: &str) -> Result<PathBuf> {
+    use std::path::Component;
+    let rel = Path::new(path);
+    let escapes = rel.is_absolute()
+        || rel
+            .components()
+            .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)));
+    if escapes {
+        return Err(Error::Other(format!("invalid path: {path}")));
+    }
+    Ok(paths.root.join(rel))
+}
+
+/// A linked spec's working-tree source, for the in-app code editor.
+#[tauri::command]
+pub async fn read_spec(path: String, state: tauri::State<'_, AppState>) -> Result<String> {
+    let paths = state.paths()?;
+    let file = resolve_repo_file(&paths, &path)?;
+    if !file.is_file() {
+        return Err(Error::Playwright(format!("spec not found on disk: {path}")));
+    }
+    Ok(std::fs::read_to_string(file)?)
+}
+
+/// Overwrite a linked spec from the in-app code editor. Edit-only by design:
+/// the file must already exist, and the change lands in the working tree like
+/// any other edit, to be reviewed and committed in the Changes panel.
+#[tauri::command]
+pub async fn write_spec(
+    path: String,
+    content: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let file = resolve_repo_file(&paths, &path)?;
+    if !file.is_file() {
+        return Err(Error::Playwright(format!("spec not found on disk: {path}")));
+    }
+    std::fs::write(file, content)?;
+    Ok(())
+}
+
 /// Link accepted specs to a case (front matter + `links.yml`).
 #[tauri::command]
 pub fn accept_generation(

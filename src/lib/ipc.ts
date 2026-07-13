@@ -161,6 +161,9 @@ export const api = {
   automationContext: (id: string) =>
     invoke<RepoContext>("automation_context", { id }),
   fileDiff: (path: string) => invoke<FileDiff>("file_diff", { path }),
+  readSpec: (path: string) => invoke<string>("read_spec", { path }),
+  writeSpec: (path: string, content: string) =>
+    invoke<void>("write_spec", { path, content }),
   generateSpec: (caseId: string, agentId: string, update: boolean) =>
     invoke<void>("generate_spec", { caseId, agentId, update }),
   acceptGeneration: (caseId: string, specs: string[], generator: string) =>

@@ -104,6 +104,54 @@ pub fn target_env(target: &TestTarget) -> Vec<(String, String)> {
     env
 }
 
+/// Best-effort scrape of `testDir: "…"` from a Playwright config, normalized to
+/// a repo-relative directory (no leading `./`, no trailing slash).
+pub fn detect_test_dir(config: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(config).ok()?;
+    let idx = text.find("testDir")?;
+    let after = &text[idx + "testDir".len()..];
+    let after = after.trim_start_matches([':', ' ', '\t']);
+    let quote = after.chars().next().filter(|c| *c == '\'' || *c == '"')?;
+    let rest = &after[1..];
+    let end = rest.find(quote)?;
+    let dir = rest[..end]
+        .trim()
+        .trim_start_matches("./")
+        .trim_end_matches('/');
+    (!dir.is_empty()).then(|| dir.to_string())
+}
+
+/// Verify every spec file exists and is discoverable by Playwright (i.e. lives
+/// inside the configured `testDir`). Playwright's own failure mode for both is
+/// a bare "No tests found", which explains nothing; this turns it into an
+/// actionable error before anything is spawned.
+fn validate_spec_files<'a, I: IntoIterator<Item = &'a String>>(
+    paths: &Paths,
+    info: &PlaywrightInfo,
+    files: I,
+) -> Result<()> {
+    let test_dir = info
+        .config
+        .as_deref()
+        .and_then(|cfg| detect_test_dir(&paths.root.join(cfg)));
+    for f in files {
+        if !paths.root.join(f).is_file() {
+            return Err(Error::Playwright(format!(
+                "linked spec not found on disk: {f} (relink the case or regenerate its automation)"
+            )));
+        }
+        if let Some(dir) = &test_dir {
+            if f != dir && !f.starts_with(&format!("{dir}/")) {
+                return Err(Error::Playwright(format!(
+                    "spec {f} is outside Playwright's testDir ({dir}/), so Playwright will not \
+                     discover it; move the file under {dir}/ and update the case's linked spec path"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn local_binary(repo_root: &Path) -> Option<PathBuf> {
     let bin = repo_root.join("node_modules").join(".bin").join("playwright");
     bin.is_file().then_some(bin)
@@ -659,6 +707,7 @@ pub fn execute<F: FnMut(&str)>(
             ..Default::default()
         });
     }
+    validate_spec_files(paths, &pw, &plan.files)?;
 
     let report = report_path(paths, &run.id);
     if let Some(parent) = report.parent() {
@@ -731,7 +780,8 @@ pub fn run_spec_preview<F: FnMut(&str)>(
     headed: bool,
     mut on_line: F,
 ) -> Result<()> {
-    if !detect(&paths.root).detected {
+    let pw = detect(&paths.root);
+    if !pw.detected {
         return Err(Error::Playwright(
             "no playwright.config found in the repo root".into(),
         ));
@@ -743,6 +793,7 @@ pub fn run_spec_preview<F: FnMut(&str)>(
             "this case has no linked spec to run".into(),
         ));
     }
+    validate_spec_files(paths, &pw, &files)?;
     let greps: Vec<String> = refs.iter().filter_map(|r| r.test.clone()).collect();
 
     let mut args = vec!["test".to_string()];
@@ -1000,6 +1051,44 @@ mod tests {
         assert_eq!(cart.attachments, vec!["test-results/cart/trace.zip"]);
         // ANSI stripped, first line kept.
         assert_eq!(cart.message.as_deref(), Some("Expect: badge to be 1"));
+    }
+
+    #[test]
+    fn detect_test_dir_scrapes_config() {
+        let cfg = std::env::temp_dir().join(format!("th-cfg-{}.ts", std::process::id()));
+        std::fs::write(&cfg, "export default { testDir: './playwright', use: {} }").unwrap();
+        assert_eq!(detect_test_dir(&cfg).as_deref(), Some("playwright"));
+        std::fs::remove_file(&cfg).ok();
+    }
+
+    #[test]
+    fn validation_flags_missing_and_undiscoverable_specs() {
+        let root = std::env::temp_dir().join(format!("th-validate-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("playwright")).unwrap();
+        std::fs::create_dir_all(root.join("tests")).unwrap();
+        std::fs::write(
+            root.join("playwright.config.ts"),
+            "export default { testDir: './playwright' }",
+        )
+        .unwrap();
+        std::fs::write(root.join("playwright/a.spec.ts"), "test").unwrap();
+        std::fs::write(root.join("tests/b.spec.ts"), "test").unwrap();
+        let paths = Paths::new(&root, "testhound");
+        let info = detect(&root);
+
+        // Inside testDir: fine.
+        assert!(validate_spec_files(&paths, &info, &["playwright/a.spec.ts".to_string()]).is_ok());
+        // Exists but outside testDir: Playwright would say "No tests found".
+        let err = validate_spec_files(&paths, &info, &["tests/b.spec.ts".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("outside Playwright's testDir"), "{err}");
+        // Missing file.
+        let err = validate_spec_files(&paths, &info, &["playwright/gone.spec.ts".to_string()])
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found on disk"), "{err}");
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

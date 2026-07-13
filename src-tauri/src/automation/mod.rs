@@ -61,7 +61,7 @@ pub fn detect_context(paths: &Paths, case: &TestCase) -> RepoContext {
     let tests_dir = pw
         .config
         .as_deref()
-        .and_then(|cfg| detect_test_dir(&paths.root.join(cfg)))
+        .and_then(|cfg| playwright::detect_test_dir(&paths.root.join(cfg)))
         .unwrap_or_else(|| "tests".to_string());
     // A configured test target wins over whatever is scraped from the config, so
     // generated specs point at the address the user set in Settings.
@@ -100,23 +100,6 @@ fn detect_base_url(config: &Path) -> Option<String> {
     let end = rest.find(quote)?;
     let url = rest[..end].trim();
     (!url.is_empty()).then(|| url.to_string())
-}
-
-/// Best-effort scrape of `testDir: "…"` from a Playwright config, normalized to
-/// a repo-relative directory (no leading `./`, no trailing slash).
-fn detect_test_dir(config: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(config).ok()?;
-    let idx = text.find("testDir")?;
-    let after = &text[idx + "testDir".len()..];
-    let after = after.trim_start_matches([':', ' ', '\t']);
-    let quote = after.chars().next().filter(|c| *c == '\'' || *c == '"')?;
-    let rest = &after[1..];
-    let end = rest.find(quote)?;
-    let dir = rest[..end]
-        .trim()
-        .trim_start_matches("./")
-        .trim_end_matches('/');
-    (!dir.is_empty()).then(|| dir.to_string())
 }
 
 // ---- prompt building ----------------------------------------------------------
@@ -604,14 +587,6 @@ mod tests {
             spec_path_for(&sample_case(), "playwright"),
             "playwright/checkout/add-item-to-cart.spec.ts"
         );
-    }
-
-    #[test]
-    fn detect_test_dir_scrapes_config() {
-        let dir = std::env::temp_dir().join(format!("th-cfg-{}.ts", std::process::id()));
-        std::fs::write(&dir, "export default { testDir: './playwright', use: {} }").unwrap();
-        assert_eq!(detect_test_dir(&dir).as_deref(), Some("playwright"));
-        std::fs::remove_file(&dir).ok();
     }
 
     #[test]

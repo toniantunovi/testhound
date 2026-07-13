@@ -231,6 +231,10 @@ fn execute_spawns_runner_and_ingests() {
     case.front.automation.specs = vec!["tests/checkout/cart.spec.ts".into()];
     repo::save_case(&paths, &case).unwrap();
 
+    // The linked spec must exist on disk; execute() validates it before spawning.
+    std::fs::create_dir_all(root.join("tests/checkout")).unwrap();
+    std::fs::write(root.join("tests/checkout/cart.spec.ts"), "// stub\n").unwrap();
+
     let run = runs::create_run(
         &paths,
         CreateRun {

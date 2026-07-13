@@ -22,6 +22,7 @@ import { useAgentDrawer } from "@/store/agent";
 import { AutomationBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
+import { SpecEditorModal } from "./SpecEditorModal";
 
 const PRIORITIES: Priority[] = ["low", "medium", "high", "critical"];
 const TYPES: CaseType[] = [
@@ -50,6 +51,8 @@ export function CaseEditor() {
 
   const [draft, setDraft] = useState<TestCase | null>(null);
   const [dirty, setDirty] = useState(false);
+  // Repo-relative path of the spec being viewed/edited, if the modal is open.
+  const [openSpecPath, setOpenSpecPath] = useState<string | null>(null);
 
   useEffect(() => {
     if (loaded) {
@@ -277,13 +280,17 @@ export function CaseEditor() {
             {draft.automation.specs && draft.automation.specs.length > 0 ? (
               <div className="mb-3 flex flex-col gap-1">
                 {draft.automation.specs.map((spec) => (
-                  <div
+                  <button
                     key={spec}
-                    className="flex items-center gap-1.5 font-mono text-xs text-text-secondary"
+                    title="View and edit the spec code"
+                    onClick={() => setOpenSpecPath(spec.split("#")[0])}
+                    className="flex w-full items-center gap-1.5 rounded-control px-1 py-0.5 text-left font-mono text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
                   >
-                    <GitBranch size={11} className="text-brand-accent" />
-                    <span className="truncate">{spec}</span>
-                  </div>
+                    <GitBranch size={11} className="shrink-0 text-brand-accent" />
+                    <span className="truncate underline decoration-border-strong decoration-dotted underline-offset-2">
+                      {spec}
+                    </span>
+                  </button>
                 ))}
               </div>
             ) : (
@@ -330,6 +337,13 @@ export function CaseEditor() {
           </div>
         </aside>
       </div>
+
+      {openSpecPath && (
+        <SpecEditorModal
+          path={openSpecPath}
+          onClose={() => setOpenSpecPath(null)}
+        />
+      )}
     </div>
   );
 }

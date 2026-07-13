@@ -56,6 +56,8 @@ pub fn run() {
             app::coverage,
             app::automation_context,
             app::file_diff,
+            app::read_spec,
+            app::write_spec,
             app::accept_generation,
             app::generate_spec,
             app::triage_failure,
