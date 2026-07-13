@@ -66,6 +66,36 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # macOS code signing + notarization. Without the six APPLE_* repo secrets
+      # the .app is only ad-hoc signed and Gatekeeper reports browser downloads
+      # as "damaged". Set them all (Apple Developer Program required;
+      # APPLE_CERTIFICATE is a base64-encoded "Developer ID Application" .p12
+      # export) and this step exports them for tauri-action. The vars must stay
+      # entirely unset when the secrets are empty: the bundler treats a present
+      # but empty APPLE_CERTIFICATE as a signing request and fails the build.
+      - name: Enable macOS signing (no-op until APPLE_* secrets are set)
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE secret not set; building without Developer ID signing."
+            exit 0
+          fi
+          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            eval "val=\$$v"
+            {
+              echo "$v<<TH_ENV_EOF"
+              echo "$val"
+              echo "TH_ENV_EOF"
+            } >> "$GITHUB_ENV"
+          done
+
       - name: Build and release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -75,16 +105,6 @@ jobs:
           # committed in tauri.conf.json.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # macOS code signing + notarization. Without these the .app is only
-          # ad-hoc signed and Gatekeeper reports downloads as "damaged". Set all
-          # six secrets (Apple Developer Program required): APPLE_CERTIFICATE is
-          # a base64-encoded "Developer ID Application" .p12 export.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "TestHound ${{ github.ref_name }}"
