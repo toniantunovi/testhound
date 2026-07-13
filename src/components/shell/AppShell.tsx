@@ -5,6 +5,7 @@ import { ActivityConsole } from "./ActivityConsole";
 import { CommandPalette } from "./CommandPalette";
 import { AssistantPanel } from "./AssistantPanel";
 import { useRunEvents } from "@/lib/useRunEvents";
+import { useAutoSync } from "@/lib/useAutoSync";
 import { useSession } from "@/store/session";
 import { useAssistant } from "@/store/assistant";
 import { Dashboard } from "@/screens/Dashboard";
@@ -26,6 +27,7 @@ export function AppShell() {
   const togglePalette = useSession((s) => s.togglePalette);
   const toggleAssistant = useAssistant((s) => s.toggle);
   useRunEvents();
+  useAutoSync();
 
   // ⌘K opens the command palette; ⌘J toggles the assistant panel.
   useEffect(() => {

@@ -13,6 +13,7 @@ import {
 import { api, errMsg } from "@/lib/ipc";
 import type { UpdateInfo } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
+import { usePrefs } from "@/store/prefs";
 
 export function Settings() {
   return (
@@ -22,6 +23,7 @@ export function Settings() {
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
         <div className="mx-auto flex max-w-2xl flex-col gap-6">
+          <AutoSyncSection />
           <TestTargetSection />
           <LfsSection />
           <UpdatesSection />
@@ -51,6 +53,39 @@ function Section({
       <p className="mb-4 text-xs leading-relaxed text-text-secondary">{blurb}</p>
       {children}
     </section>
+  );
+}
+
+function AutoSyncSection() {
+  const autoSync = usePrefs((s) => s.autoSync);
+  const setAutoSync = usePrefs((s) => s.setAutoSync);
+
+  return (
+    <Section
+      icon={<RefreshCw size={15} className="text-brand-accent" />}
+      title="Automatic sync"
+      blurb="TestHound handles Git for you: your saved work is committed automatically after a short pause, and the project pulls and pushes in the background so everyone stays on the latest state. Only conflicting edits ever need your attention. Turn this off to review, commit, and sync manually."
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2 text-sm">
+          {autoSync ? (
+            <span className="inline-flex items-center gap-1.5 text-status-passed">
+              <Check size={14} /> On, changes are committed and synced for you
+            </span>
+          ) : (
+            <span className="text-text-secondary">
+              Off, you commit and sync manually
+            </span>
+          )}
+        </div>
+        <Button
+          variant={autoSync ? "secondary" : "primary"}
+          onClick={() => setAutoSync(!autoSync)}
+        >
+          {autoSync ? "Turn off" : "Turn on"}
+        </Button>
+      </div>
+    </Section>
   );
 }
 

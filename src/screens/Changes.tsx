@@ -17,6 +17,7 @@ import { diffStat, lineDiff } from "@/lib/diff";
 import { DiffView } from "@/components/ui/DiffView";
 import { Button } from "@/components/ui/Button";
 import { useActivity } from "@/store/activity";
+import { usePrefs } from "@/store/prefs";
 import { cn } from "@/lib/utils";
 
 /** Frame 13 - Changes / Commit. The Git staging surface: changed TestHound
@@ -26,6 +27,7 @@ export function Changes() {
   const qc = useQueryClient();
   const push = useActivity((s) => s.push);
   const finish = useActivity((s) => s.finish);
+  const autoSync = usePrefs((s) => s.autoSync);
 
   const { data: git } = useQuery({
     queryKey: ["git-status"],
@@ -112,8 +114,9 @@ export function Changes() {
         <GitCommitHorizontal size={28} className="text-text-muted" />
         <p className="text-sm text-text-secondary">No uncommitted changes</p>
         <p className="text-xs text-text-muted">
-          Edits to cases, specs, and results will appear here to review and
-          commit.
+          {autoSync
+            ? "Automatic sync is on: edits are committed and shared for you. Recent edits briefly appear here in case you want to review them."
+            : "Edits to cases, specs, and results will appear here to review and commit."}
         </p>
       </div>
     );
@@ -205,6 +208,13 @@ export function Changes() {
 
         {/* Commit box */}
         <div className="border-t border-border-subtle p-4">
+          {autoSync && (
+            <p className="mb-3 rounded-control border border-brand-accent/25 bg-brand-accent/5 px-3 py-2 text-xs text-text-secondary">
+              Automatic sync is on: TestHound commits and syncs these changes
+              for you after a short pause (paused while you review here).
+              Committing manually is also fine.
+            </p>
+          )}
           <div className="mb-2 flex items-center justify-between">
             <span className="text-sm font-medium">Commit message</span>
             <button
