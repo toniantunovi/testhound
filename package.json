@@ -1,7 +1,7 @@
 {
   "name": "testhound",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "description": "A Git-native, AI-powered test management desktop app",
   "scripts": {
