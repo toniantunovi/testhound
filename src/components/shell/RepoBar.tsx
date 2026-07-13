@@ -8,11 +8,13 @@ import {
   GitBranch,
   GitMerge,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Sparkles,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
+import { useSync } from "@/lib/useSync";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
 import { useAssistant } from "@/store/assistant";
@@ -26,8 +28,27 @@ export function RepoBar() {
   const assistantOpen = useAssistant((s) => s.open);
   const push = useActivity((s) => s.push);
   const finish = useActivity((s) => s.finish);
+  const setActivity = useSession((s) => s.setActivity);
   const qc = useQueryClient();
   const [branchOpen, setBranchOpen] = useState(false);
+  const [newBranch, setNewBranch] = useState("");
+
+  // Git failures land in the activity console; pop it open so they are seen.
+  const surfaceError = (e: unknown) => {
+    push(`error: ${errMsg(e)}`);
+    finish(null);
+    setActivity(true);
+  };
+
+  // A branch change (switch or create) touches everything derived from the
+  // working tree; refetch those queries instead of invalidating all at once.
+  const afterBranchChange = () => {
+    setBranchOpen(false);
+    setNewBranch("");
+    ["git-status", "branches", "conflicts", "cases", "runs", "dashboard", "coverage"].forEach(
+      (key) => qc.invalidateQueries({ queryKey: [key] }),
+    );
+  };
 
   const { data: git } = useQuery({
     queryKey: ["git-status"],
@@ -52,29 +73,16 @@ export function RepoBar() {
 
   const switchBranch = useMutation({
     mutationFn: (name: string) => api.switchBranch(name),
-    onSuccess: () => {
-      setBranchOpen(false);
-      // Refetch only what a branch switch actually changes, instead of
-      // invalidating every query at once (each is a blocking backend call).
-      ["git-status", "conflicts", "cases", "runs", "dashboard", "coverage"].forEach(
-        (key) => qc.invalidateQueries({ queryKey: [key] }),
-      );
-    },
+    onSuccess: afterBranchChange,
+    onError: surfaceError,
   });
 
-  const sync = useMutation({
-    mutationFn: api.syncRepo,
-    onMutate: () => push("$ git pull --ff-only && git push"),
-    onSuccess: (out) => {
-      out.split("\n").forEach((l) => l && push(l));
-      finish("Synced");
-      qc.invalidateQueries({ queryKey: ["git-status"] });
-    },
-    onError: (e) => {
-      push(`error: ${errMsg(e)}`);
-      finish(null);
-    },
+  const createBranch = useMutation({
+    mutationFn: (name: string) => api.createBranch(name),
+    onSuccess: afterBranchChange,
   });
+
+  const syncFlow = useSync();
 
   return (
     <header
@@ -133,6 +141,43 @@ export function RepoBar() {
                   {b}
                 </button>
               ))}
+              <div className="mt-1 border-t border-border-subtle px-3 pb-1.5 pt-2">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    value={newBranch}
+                    onChange={(e) => {
+                      setNewBranch(e.target.value);
+                      createBranch.reset();
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newBranch.trim()) {
+                        createBranch.mutate(newBranch.trim());
+                      }
+                    }}
+                    placeholder="New branch name…"
+                    spellCheck={false}
+                    className="selectable min-w-0 flex-1 rounded-control border border-border-subtle bg-bg-base px-2 py-1 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
+                  />
+                  <button
+                    onClick={() => createBranch.mutate(newBranch.trim())}
+                    disabled={!newBranch.trim() || createBranch.isPending}
+                    title="Create branch from current HEAD and switch to it"
+                    className="flex shrink-0 items-center gap-1 rounded-control border border-border-subtle bg-bg-surface-2 px-2 py-1 text-xs text-text-secondary hover:border-border-strong hover:text-text-primary disabled:opacity-50"
+                  >
+                    {createBranch.isPending ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Plus size={12} />
+                    )}
+                    Create
+                  </button>
+                </div>
+                {createBranch.isError && (
+                  <p className="mt-1.5 whitespace-pre-wrap text-[11px] text-status-failed">
+                    {errMsg(createBranch.error)}
+                  </p>
+                )}
+              </div>
             </div>
           </>
         )}
@@ -164,15 +209,18 @@ export function RepoBar() {
         </button>
       )}
 
-      {/* Conflict resolver entry point */}
-      {conflictCount > 0 && (
+      {/* Conflict resolver entry point; also flags a resolved-but-unfinished
+          merge so the concluding commit is never forgotten */}
+      {(conflictCount > 0 || conflicts?.merging) && (
         <button
           onClick={() => navigate("merge")}
           title="Resolve merge conflicts"
           className="th-no-drag flex items-center gap-1.5 rounded-control border border-status-failed/30 bg-status-failed/10 px-2 py-1 text-xs font-medium text-status-failed hover:bg-status-failed/20"
         >
           <GitMerge size={12} />
-          {conflictCount} conflict{conflictCount === 1 ? "" : "s"}
+          {conflictCount > 0
+            ? `${conflictCount} conflict${conflictCount === 1 ? "" : "s"}`
+            : "finish merge"}
         </button>
       )}
 
@@ -207,14 +255,14 @@ export function RepoBar() {
 
       {/* Sync */}
       <button
-        onClick={() => sync.mutate()}
-        disabled={sync.isPending}
+        onClick={syncFlow.sync}
+        disabled={syncFlow.pending}
         className={cn(
           "th-no-drag flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs font-medium",
           "bg-brand-primary text-bg-base hover:bg-brand-primary/90 disabled:opacity-60",
         )}
       >
-        {sync.isPending ? (
+        {syncFlow.pending ? (
           <Loader2 size={12} className="animate-spin" />
         ) : (
           <RefreshCw size={12} />

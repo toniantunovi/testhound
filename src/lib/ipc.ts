@@ -37,6 +37,7 @@ import type {
   RunSummary,
   Side,
   SuiteTree,
+  SyncOutcome,
   TestCase,
   TestTarget,
   UpdateInfo,
@@ -108,6 +109,7 @@ export const api = {
   gitStatus: () => invoke<GitStatus>("git_status"),
   listBranches: () => invoke<string[]>("list_branches"),
   switchBranch: (name: string) => invoke<GitStatus>("switch_branch", { name }),
+  createBranch: (name: string) => invoke<GitStatus>("create_branch", { name }),
 
   dashboard: () => invoke<Dashboard>("dashboard"),
 
@@ -186,7 +188,10 @@ export const api = {
   commitChanges: (message: string, files: string[]) =>
     invoke<GitStatus>("commit_changes", { message, files }),
   pushChanges: () => invoke<string>("push_changes"),
-  syncRepo: () => invoke<string>("sync_repo"),
+  syncRepo: () => invoke<SyncOutcome>("sync_repo"),
+  mergeRemote: () => invoke<SyncOutcome>("merge_remote"),
+  stashPop: () => invoke<SyncOutcome>("stash_pop"),
+  completeMerge: () => invoke<string>("complete_merge"),
 
   // Case history & diff (M6)
   caseHistory: (id: string) => invoke<CommitInfo[]>("case_history", { id }),

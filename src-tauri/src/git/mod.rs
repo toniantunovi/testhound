@@ -149,6 +149,19 @@ pub fn branches(repo: &Repository) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Create a new local branch at the current HEAD and switch to it.
+pub fn create_branch(repo: &Repository, name: &str) -> Result<()> {
+    if name.is_empty() || !git2::Reference::is_valid_name(&format!("refs/heads/{name}")) {
+        return Err(Error::Other(format!("'{name}' is not a valid branch name")));
+    }
+    let head = repo
+        .head()
+        .map_err(|_| Error::Other("cannot create a branch before the first commit".into()))?
+        .peel_to_commit()?;
+    repo.branch(name, &head, false)?;
+    checkout_branch(repo, name)
+}
+
 pub fn checkout_branch(repo: &Repository, name: &str) -> Result<()> {
     let (object, reference) = repo.revparse_ext(name)?;
     repo.checkout_tree(&object, None)?;
@@ -391,31 +404,145 @@ pub fn push(root: &Path) -> Result<String> {
         String::from_utf8_lossy(&out.stderr)
     );
     if !out.status.success() {
-        return Err(Error::Other(format!("git push: {}", text.trim())));
+        let mut msg = format!("git push: {}", text.trim());
+        if text.contains("non-fast-forward") || text.contains("fetch first") {
+            msg.push_str(
+                "\nThe branch is behind its remote. Use Sync to pull the latest changes first.",
+            );
+        }
+        return Err(Error::Other(msg));
     }
     Ok(text.trim().to_string())
 }
 
-/// Fast-forward pull then push, returning a combined human-readable log. Never
-/// destructive: `--ff-only` refuses to create a merge, so a diverged branch is
-/// reported rather than silently merged.
-pub fn sync(root: &Path) -> Result<String> {
-    let mut log = String::new();
-    for step in [
-        ("pull", vec!["pull", "--ff-only"]),
-        ("push", vec!["push"]),
-    ] {
-        let out = Command::new("git")
-            .current_dir(root)
-            .args(&step.1)
-            .output()
-            .map_err(|e| Error::Other(format!("failed to spawn git: {e}")))?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout).trim(),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-        log.push_str(&format!("$ git {}\n{}\n", step.1.join(" "), text.trim()));
+/// What a sync/merge attempt produced, so the UI can inform the user and route
+/// them to the right next step instead of parsing git's prose.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncOutcome {
+    pub status: SyncStatus,
+    /// The raw `$ git ...` transcript for the activity console.
+    pub log: String,
+    /// Conflicted paths left in the index (only when `status == Conflicts`).
+    pub conflict_count: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyncStatus {
+    /// Pulled (and pushed) cleanly; nothing left to do.
+    Ok,
+    /// Local and remote both moved. A merge is needed; the user must opt in.
+    Diverged,
+    /// A merge or stash re-apply stopped on conflicts. They sit in the index,
+    /// where the Merge view picks them up.
+    Conflicts,
+    /// The pull succeeded but the uncommitted local changes conflicted with
+    /// it, so git kept them in a stash. The user decides when to re-apply.
+    StashConflicts,
+}
+
+impl SyncOutcome {
+    fn new(status: SyncStatus, log: impl Into<String>) -> Self {
+        Self { status, log: log.into(), conflict_count: 0 }
     }
-    Ok(log.trim().to_string())
+}
+
+/// Run git, returning success plus combined stdout+stderr (git spreads its
+/// human-facing output across both).
+fn git_capture(root: &Path, args: &[&str]) -> Result<(bool, String)> {
+    let out = Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()
+        .map_err(|e| Error::Other(format!("failed to spawn git: {e}")))?;
+    let text = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout).trim(),
+        String::from_utf8_lossy(&out.stderr).trim()
+    );
+    Ok((out.status.success(), text.trim().to_string()))
+}
+
+fn index_conflict_count(root: &Path) -> usize {
+    open(root)
+        .and_then(|repo| Ok(repo.index()?.conflicts()?.count()))
+        .unwrap_or(0)
+}
+
+const AUTOSTASH_CONFLICT: &str = "Applying autostash resulted in conflicts";
+
+/// Fast-forward pull then push. Never destructive: `--ff-only` refuses to
+/// create a merge, so a diverged branch is reported (`Diverged`) for the user
+/// to opt into `merge_remote`. `--autostash` stashes uncommitted changes
+/// around the pull; when reapplying them conflicts, git keeps them in the
+/// stash and we report `StashConflicts` so the UI can offer `stash_pop`.
+pub fn sync(root: &Path) -> Result<SyncOutcome> {
+    let (ok, pull) = git_capture(root, &["pull", "--ff-only", "--autostash"])?;
+    let mut log = format!("$ git pull --ff-only --autostash\n{pull}");
+    if !ok {
+        if pull.contains("fast-forward") || pull.contains("diverg") {
+            return Ok(SyncOutcome::new(SyncStatus::Diverged, log));
+        }
+        return Err(Error::Other(format!("git pull: {pull}")));
+    }
+    let stashed = pull.contains(AUTOSTASH_CONFLICT);
+    let pushed = push(root)?;
+    log.push_str(&format!("\n$ git push\n{pushed}"));
+    let status = if stashed { SyncStatus::StashConflicts } else { SyncStatus::Ok };
+    Ok(SyncOutcome::new(status, log))
+}
+
+/// Merge the remote branch into the local one (`git pull --no-rebase`), for
+/// the user-confirmed diverged case. Uncommitted changes are stashed around
+/// the merge. A conflicted merge stops with `Conflicts`: the conflicted paths
+/// land in the index and the repo enters the merge state until
+/// `complete_merge` concludes it. A clean merge is pushed immediately.
+pub fn merge_remote(root: &Path) -> Result<SyncOutcome> {
+    let (ok, pull) = git_capture(root, &["pull", "--no-rebase", "--no-edit", "--autostash"])?;
+    let mut log = format!("$ git pull --no-rebase --autostash\n{pull}");
+    if !ok {
+        let conflicts = index_conflict_count(root);
+        if conflicts > 0 {
+            return Ok(SyncOutcome {
+                status: SyncStatus::Conflicts,
+                log,
+                conflict_count: conflicts,
+            });
+        }
+        return Err(Error::Other(format!("git pull: {pull}")));
+    }
+    let stashed = pull.contains(AUTOSTASH_CONFLICT);
+    let pushed = push(root)?;
+    log.push_str(&format!("\n$ git push\n{pushed}"));
+    let status = if stashed { SyncStatus::StashConflicts } else { SyncStatus::Ok };
+    Ok(SyncOutcome::new(status, log))
+}
+
+/// Re-apply stashed changes (the autostash a sync set aside). When the apply
+/// conflicts, git keeps the stash entry as a backup and the conflicts land in
+/// the index for the Merge view.
+pub fn stash_pop(root: &Path) -> Result<SyncOutcome> {
+    let (ok, out) = git_capture(root, &["stash", "pop"])?;
+    let log = format!("$ git stash pop\n{out}");
+    if !ok {
+        let conflicts = index_conflict_count(root);
+        if conflicts > 0 {
+            return Ok(SyncOutcome {
+                status: SyncStatus::Conflicts,
+                log,
+                conflict_count: conflicts,
+            });
+        }
+        return Err(Error::Other(format!("git stash pop: {out}")));
+    }
+    Ok(SyncOutcome::new(SyncStatus::Ok, log))
+}
+
+/// Conclude an in-progress merge once every conflict is resolved: commit the
+/// staged resolutions with git's prepared merge message, then push.
+pub fn complete_merge(root: &Path) -> Result<String> {
+    let commit = run_git(root, &["commit", "--no-edit"])?;
+    let pushed = push(root)?;
+    Ok(format!("$ git commit --no-edit\n{}\n$ git push\n{}", commit.trim(), pushed).trim().to_string())
 }

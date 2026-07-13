@@ -115,3 +115,29 @@ fn history_diff_blame_and_commit() {
     assert_eq!(log2.len(), 3, "the committed edit adds a third entry");
     assert!(log2[0].summary.contains("toast"));
 }
+
+/// Creating a branch moves HEAD to it, keeps the working tree, and rejects
+/// invalid or premature (no commits yet) requests.
+#[test]
+fn create_branch_switches_and_validates() {
+    let (repo, root) = tmp_repo();
+
+    // Before the first commit there is nothing to branch from.
+    let err = git::create_branch(&repo, "feature/x").unwrap_err();
+    assert!(err.to_string().contains("first commit"), "got: {err}");
+
+    write_case(&root, &case_file("Item added"));
+    commit_all(&repo, "initial");
+
+    git::create_branch(&repo, "feature/checkout-tests").unwrap();
+    let status = git::status(&repo).unwrap();
+    assert_eq!(status.branch, "feature/checkout-tests");
+    assert!(git::branches(&repo)
+        .unwrap()
+        .contains(&"feature/checkout-tests".to_string()));
+
+    // Invalid names and duplicates are rejected with a readable error.
+    assert!(git::create_branch(&repo, "bad name").is_err());
+    assert!(git::create_branch(&repo, "").is_err());
+    assert!(git::create_branch(&repo, "feature/checkout-tests").is_err());
+}

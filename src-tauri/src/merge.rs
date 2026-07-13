@@ -83,6 +83,9 @@ pub struct RawConflict {
 pub struct Conflicts {
     pub cases: Vec<CaseMerge>,
     pub other: Vec<RawConflict>,
+    /// True while a merge is in progress (MERGE_HEAD exists), including after
+    /// every conflict is resolved but before the concluding commit.
+    pub merging: bool,
 }
 
 /// The three blob contents of a conflicted path (any may be missing).
@@ -131,7 +134,10 @@ fn is_case_path(path: &str) -> bool {
 
 /// Enumerate all index conflicts, building a semantic merge for each case file.
 pub fn conflicts(repo: &Repository) -> Result<Conflicts> {
-    let mut out = Conflicts::default();
+    let mut out = Conflicts {
+        merging: repo.state() == git2::RepositoryState::Merge,
+        ..Conflicts::default()
+    };
     for (path, sides) in conflict_sides(repo)? {
         if is_case_path(&path) {
             out.cases.push(build_case_merge(&path, &sides));

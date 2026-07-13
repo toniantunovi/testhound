@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
   GitCommitHorizontal,
@@ -12,9 +11,8 @@ import {
   Sparkles,
   Terminal,
 } from "lucide-react";
-import { api, errMsg } from "@/lib/ipc";
+import { useSync } from "@/lib/useSync";
 import { useSession, type View } from "@/store/session";
-import { useActivity } from "@/store/activity";
 import { cn } from "@/lib/utils";
 
 interface Command {
@@ -33,9 +31,7 @@ export function CommandPalette() {
   const navigate = useSession((s) => s.navigate);
   const newRun = useSession((s) => s.newRun);
   const toggleActivity = useSession((s) => s.toggleActivity);
-  const push = useActivity((s) => s.push);
-  const finish = useActivity((s) => s.finish);
-  const qc = useQueryClient();
+  const syncFlow = useSync();
 
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
@@ -49,18 +45,6 @@ export function CommandPalette() {
       icon,
       run: () => navigate(view),
     });
-    const sync = async () => {
-      try {
-        push("$ git pull --ff-only && git push");
-        const out = await api.syncRepo();
-        out.split("\n").forEach((l) => l && push(l));
-        finish("Synced");
-        qc.invalidateQueries({ queryKey: ["git-status"] });
-      } catch (e) {
-        push(`error: ${errMsg(e)}`);
-        finish(null);
-      }
-    };
     return [
       go("dashboard", "Go to Dashboard", LayoutGrid),
       go("cases", "Go to Test Cases", ListChecks),
@@ -81,7 +65,7 @@ export function CommandPalette() {
         label: "Sync (pull, then push)",
         section: "Actions",
         icon: RefreshCw,
-        run: sync,
+        run: syncFlow.sync,
       },
       {
         id: "action:activity",
@@ -91,7 +75,7 @@ export function CommandPalette() {
         run: toggleActivity,
       },
     ];
-  }, [navigate, newRun, toggleActivity, push, finish, qc]);
+  }, [navigate, newRun, toggleActivity, syncFlow.sync]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

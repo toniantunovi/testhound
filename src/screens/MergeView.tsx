@@ -4,12 +4,14 @@ import {
   Check,
   GitMerge,
   Hash,
+  Loader2,
   ShieldCheck,
   TriangleAlert,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import type { CaseMerge, FieldMerge, Side } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
+import { useActivity } from "@/store/activity";
 import { cn } from "@/lib/utils";
 
 type Picks = Record<string, Side>;
@@ -40,11 +42,11 @@ export function MergeView() {
     qc.invalidateQueries({ queryKey: ["cases"] });
   };
 
+  const conflictCount =
+    (conflicts?.cases.length ?? 0) + (conflicts?.other.length ?? 0);
+  const merging = conflicts?.merging ?? false;
   const nothing =
-    !isLoading &&
-    (conflicts?.cases.length ?? 0) === 0 &&
-    (conflicts?.other.length ?? 0) === 0 &&
-    (collisions?.length ?? 0) === 0;
+    !isLoading && !merging && conflictCount === 0 && (collisions?.length ?? 0) === 0;
 
   return (
     <div className="flex h-full flex-col">
@@ -70,6 +72,23 @@ export function MergeView() {
         )}
 
         <div className="mx-auto flex max-w-4xl flex-col gap-6">
+          {merging &&
+            (conflictCount > 0 ? (
+              <div className="flex items-start gap-2.5 rounded-card border border-status-drifted/30 bg-status-drifted/5 p-4">
+                <TriangleAlert
+                  size={15}
+                  className="mt-0.5 shrink-0 text-status-drifted"
+                />
+                <p className="text-sm leading-relaxed text-text-secondary">
+                  A merge is in progress. The remote changes are combined with
+                  yours below; resolve each conflicted file, then complete the
+                  merge. Nothing is pushed until you do.
+                </p>
+              </div>
+            ) : (
+              <CompleteMergeCard onDone={invalidate} />
+            ))}
+
           {collisions && collisions.length > 0 && (
             <CollisionsCard collisions={collisions} onDone={invalidate} />
           )}
@@ -99,6 +118,55 @@ export function MergeView() {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Shown once every conflict is resolved but the merge still needs its
+ *  concluding commit: one click commits the staged resolutions (with git's
+ *  prepared merge message) and pushes. */
+function CompleteMergeCard({ onDone }: { onDone: () => void }) {
+  const push = useActivity((s) => s.push);
+  const finish = useActivity((s) => s.finish);
+  const [error, setError] = useState<string | null>(null);
+
+  const complete = useMutation({
+    mutationFn: api.completeMerge,
+    onSuccess: (log) => {
+      log.split("\n").forEach((l) => l && push(l));
+      finish("Merge completed and pushed");
+      onDone();
+    },
+    onError: (e) => setError(errMsg(e)),
+  });
+
+  return (
+    <div className="rounded-card border border-status-passed/30 bg-status-passed/5 p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Check size={15} className="text-status-passed" />
+        <h3 className="text-sm font-medium">All conflicts resolved</h3>
+      </div>
+      <p className="mb-3 text-xs leading-relaxed text-text-secondary">
+        The merge is still open: your resolutions are staged but not committed.
+        Complete it to commit them and push the merged branch.
+      </p>
+      {error && (
+        <p className="mb-2 whitespace-pre-wrap text-xs text-status-failed">
+          {error}
+        </p>
+      )}
+      <Button
+        variant="primary"
+        disabled={complete.isPending}
+        onClick={() => complete.mutate()}
+      >
+        {complete.isPending ? (
+          <Loader2 size={13} className="animate-spin" />
+        ) : (
+          <GitMerge size={13} />
+        )}
+        Complete merge
+      </Button>
     </div>
   );
 }

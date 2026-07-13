@@ -393,6 +393,19 @@ export interface RawConflict {
 export interface Conflicts {
   cases: CaseMerge[];
   other: RawConflict[];
+  /** A merge is in progress; once all conflicts are resolved it still needs a
+   *  concluding commit (completeMerge). */
+  merging: boolean;
+}
+
+export type SyncStatus = "ok" | "diverged" | "conflicts" | "stash-conflicts";
+
+/** Structured result of sync/merge/stash-pop, so the UI can inform the user
+ *  and route them (dialog, Merge view) instead of parsing git output. */
+export interface SyncOutcome {
+  status: SyncStatus;
+  log: string;
+  conflictCount: number;
 }
 
 export interface IdCollision {

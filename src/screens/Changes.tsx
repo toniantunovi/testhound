@@ -228,6 +228,11 @@ export function Changes() {
             placeholder="Describe the change…"
             className="selectable w-full resize-none rounded-card border border-border-subtle bg-bg-base p-3 font-mono text-[13px] leading-relaxed text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
           />
+          {commit.isError && (
+            <p className="mt-2 whitespace-pre-wrap rounded-control border border-status-failed/30 bg-status-failed/10 px-3 py-2 text-xs text-status-failed">
+              {errMsg(commit.error)}
+            </p>
+          )}
           <div className="mt-3 flex items-center gap-3">
             <span className="text-xs text-text-muted">
               {stagedCount} of {changed.length} files staged

@@ -328,6 +328,15 @@ pub async fn switch_branch(name: String, state: tauri::State<'_, AppState>) -> R
     git::status(&repo)
 }
 
+/// Create a new branch at HEAD and switch to it.
+#[tauri::command]
+pub async fn create_branch(name: String, state: tauri::State<'_, AppState>) -> Result<git::GitStatus> {
+    let paths = state.paths()?;
+    let repo = git::open(&paths.root)?;
+    git::create_branch(&repo, name.trim())?;
+    git::status(&repo)
+}
+
 // ---- Runs & results -----------------------------------------------------------
 
 #[tauri::command]
@@ -1232,10 +1241,31 @@ pub async fn push_changes(state: tauri::State<'_, AppState>) -> Result<String> {
     git::push(&state.paths()?.root)
 }
 
-/// Fast-forward pull then push, for the repo-bar Sync button.
+/// Fast-forward pull then push, for the repo-bar Sync button. Returns a
+/// structured outcome so the UI can route diverged branches and conflicts to
+/// the right follow-up instead of showing a raw git error.
 #[tauri::command]
-pub async fn sync_repo(state: tauri::State<'_, AppState>) -> Result<String> {
+pub async fn sync_repo(state: tauri::State<'_, AppState>) -> Result<git::SyncOutcome> {
     git::sync(&state.paths()?.root)
+}
+
+/// Merge the remote branch into the local one, after the user confirmed the
+/// diverged-branches dialog. Conflicts land in the Merge view.
+#[tauri::command]
+pub async fn merge_remote(state: tauri::State<'_, AppState>) -> Result<git::SyncOutcome> {
+    git::merge_remote(&state.paths()?.root)
+}
+
+/// Re-apply the stash a sync set aside when local changes conflicted.
+#[tauri::command]
+pub async fn stash_pop(state: tauri::State<'_, AppState>) -> Result<git::SyncOutcome> {
+    git::stash_pop(&state.paths()?.root)
+}
+
+/// Conclude a resolved merge: commit the staged resolutions and push.
+#[tauri::command]
+pub async fn complete_merge(state: tauri::State<'_, AppState>) -> Result<String> {
+    git::complete_merge(&state.paths()?.root)
 }
 
 // ---- Case history & diff (docs/06-ui-ux.md frame 05, roadmap M6) --------------
