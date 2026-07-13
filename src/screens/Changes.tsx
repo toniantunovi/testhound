@@ -210,9 +210,10 @@ export function Changes() {
         <div className="border-t border-border-subtle p-4">
           {autoSync && (
             <p className="mb-3 rounded-control border border-brand-accent/25 bg-brand-accent/5 px-3 py-2 text-xs text-text-secondary">
-              Automatic sync is on: TestHound commits and syncs these changes
-              for you after a short pause (paused while you review here).
-              Committing manually is also fine.
+              Automatic sync is on: TestHound commits and syncs its own files
+              (cases, runs, linked specs) for you after a short pause, paused
+              while you review here. Other project files are never
+              auto-committed; commit them manually below.
             </p>
           )}
           <div className="mb-2 flex items-center justify-between">

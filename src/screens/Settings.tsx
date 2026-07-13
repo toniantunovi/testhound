@@ -64,7 +64,7 @@ function AutoSyncSection() {
     <Section
       icon={<RefreshCw size={15} className="text-brand-accent" />}
       title="Automatic sync"
-      blurb="TestHound handles Git for you: your saved work is committed automatically after a short pause, and the project pulls and pushes in the background so everyone stays on the latest state. Only conflicting edits ever need your attention. Turn this off to review, commit, and sync manually."
+      blurb="TestHound handles Git for you: your saved work is committed automatically after a short pause, and the project pulls and pushes in the background so everyone stays on the latest state. Only TestHound's own files are committed (cases, runs, and specs linked to a case); anything else in the repository is left alone. Only conflicting edits ever need your attention. Turn this off to review, commit, and sync manually."
     >
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-sm">

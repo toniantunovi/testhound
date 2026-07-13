@@ -2,7 +2,7 @@
 // default). A background loop keeps the repo current without any manual
 // staging, committing, pulling, or pushing:
 //
-//  - When the working tree has been quiet for IDLE_MS, everything is
+//  - When TestHound's own changes have been quiet for IDLE_MS, they are
 //    committed with the drafted message and synced (pull + push).
 //  - Independent of local edits, the repo pulls/pushes every SYNC_EVERY_MS
 //    and once when the project opens, so remote changes flow in.
@@ -10,12 +10,19 @@
 //    set-aside changes re-apply on their own; only real conflicts wait for a
 //    human, surfaced through the repo-bar badge and the Merge view.
 //
+// Auto-commit only ever touches files TestHound owns: everything under the
+// project's TestHound directory (cases, runs, automation links, milestones)
+// plus Playwright specs that are linked to a case. When TestHound lives
+// inside a product repo, a developer's unrelated work-in-progress is never
+// swept into an auto-commit, and generated-but-not-yet-accepted specs stay
+// out of history until they are accepted (acceptance links them).
+//
 // The loop stands down whenever committing could capture half-done work or
 // fight another writer: during merges/conflicts, on a detached HEAD, while
 // the assistant or a generation agent is writing files, while a sync or
 // commit is already in flight, and while the user is reviewing on the
 // Changes or Merge screens (reviewing there means manual control).
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, errMsg } from "@/lib/ipc";
 import type { ChangedFile } from "@/lib/types";
@@ -27,12 +34,15 @@ import { useActivity } from "@/store/activity";
 import { useAssistant } from "@/store/assistant";
 import { useAgentDrawer } from "@/store/agent";
 
-/** The working tree must be unchanged this long before it auto-commits. */
+/** TestHound's changes must be unchanged this long before they auto-commit. */
 const IDLE_MS = 30_000;
 /** Background pull/push cadence (also runs right after every auto-commit). */
 const SYNC_EVERY_MS = 180_000;
 /** How often the loop re-evaluates. */
 const TICK_MS = 5_000;
+
+/** Normalize a repo-relative path for comparison. */
+const norm = (p: string) => p.replace(/\\/g, "/").replace(/^\.\//, "");
 
 export function useAutoSync() {
   const enabled = usePrefs((s) => s.autoSync);
@@ -57,6 +67,26 @@ export function useAutoSync() {
     refetchInterval: 15_000,
     enabled: enabled && !!project,
   });
+  // Specs linked to a case are TestHound-owned; coverage carries the links.
+  const { data: coverage } = useQuery({
+    queryKey: ["coverage"],
+    queryFn: api.coverage,
+    refetchInterval: 30_000,
+    enabled: enabled && !!project,
+  });
+
+  const linkedSpecs = useMemo(
+    () => new Set((coverage?.rows ?? []).flatMap((r) => r.specs.map(norm))),
+    [coverage],
+  );
+  const thPrefix = project ? `${norm(project.thDir)}/` : null;
+  const owned = useMemo(() => {
+    if (!thPrefix) return [] as ChangedFile[];
+    return (git?.changed ?? []).filter((f) => {
+      const p = norm(f.path);
+      return p.startsWith(thPrefix) || linkedSpecs.has(p);
+    });
+  }, [git, thPrefix, linkedSpecs]);
 
   const commit = useMutation({
     mutationFn: async (files: ChangedFile[]) => {
@@ -75,11 +105,10 @@ export function useAutoSync() {
     },
   });
 
-  // Track how long the change set has been stable. Saves in TestHound are
-  // explicit writes, so a quiet status for IDLE_MS means nothing is mid-save.
-  const fingerprint = (git?.changed ?? [])
-    .map((f) => `${f.status} ${f.path}`)
-    .join("\n");
+  // Track how long the owned change set has been stable. Saves in TestHound
+  // are explicit writes, so a quiet status for IDLE_MS means nothing is
+  // mid-save.
+  const fingerprint = owned.map((f) => `${f.status} ${f.path}`).join("\n");
   const idleSince = useRef(Date.now());
   const lastFingerprint = useRef(fingerprint);
   useEffect(() => {
@@ -121,9 +150,9 @@ export function useAutoSync() {
     if (reviewing) return;
 
     const now = Date.now();
-    if (git.changed.length > 0 && now - idleSince.current >= IDLE_MS) {
+    if (owned.length > 0 && now - idleSince.current >= IDLE_MS) {
       lastSync.current = now; // the commit's onSuccess syncs
-      commit.mutate(git.changed);
+      commit.mutate(owned);
       return;
     }
     if (now - lastSync.current >= SYNC_EVERY_MS) {
