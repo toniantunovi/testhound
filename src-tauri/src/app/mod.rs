@@ -23,7 +23,7 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// The currently open project. libgit2's `Repository` is not thread-safe, so we
 /// store only paths here and open the repo on demand inside each command.
@@ -108,6 +108,25 @@ fn project_info(paths: &Paths, project: &Project) -> Result<ProjectInfo> {
     })
 }
 
+/// Marker file in the per-user app config dir remembering the last opened
+/// repo, so a fresh launch lands in the same project instead of onboarding.
+fn last_project_file(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_config_dir()
+        .ok()
+        .map(|d| d.join("last-project"))
+}
+
+/// Best-effort: failures only mean the next launch starts at onboarding.
+fn remember_last_project(app: &AppHandle, root: &Path) {
+    if let Some(file) = last_project_file(app) {
+        if let Some(dir) = file.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(&file, root.display().to_string());
+    }
+}
+
 // ---- Commands -----------------------------------------------------------------
 
 #[tauri::command]
@@ -131,6 +150,7 @@ pub fn scaffold_project(
     path: String,
     name: String,
     seed: bool,
+    app: AppHandle,
     state: tauri::State<AppState>,
 ) -> Result<ProjectInfo> {
     let root = PathBuf::from(&path);
@@ -146,11 +166,16 @@ pub fn scaffold_project(
         paths,
         playwright: info.playwright_detected,
     });
+    remember_last_project(&app, &root);
     Ok(info)
 }
 
 #[tauri::command]
-pub fn open_project(path: String, state: tauri::State<AppState>) -> Result<ProjectInfo> {
+pub fn open_project(
+    path: String,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<ProjectInfo> {
     let root = PathBuf::from(&path);
     let th_dir = repo::detect(&root)
         .ok_or_else(|| Error::InvalidFormat("no testhound/ project in this repo".into()))?;
@@ -161,17 +186,50 @@ pub fn open_project(path: String, state: tauri::State<AppState>) -> Result<Proje
         paths,
         playwright: info.playwright_detected,
     });
+    remember_last_project(&app, &root);
     Ok(info)
 }
 
 #[tauri::command]
-pub async fn current_project(state: tauri::State<'_, AppState>) -> Result<Option<ProjectInfo>> {
-    let guard = state.open.lock().unwrap();
-    let Some(open) = guard.as_ref() else {
+pub async fn current_project(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<ProjectInfo>> {
+    {
+        let guard = state.open.lock().unwrap();
+        if let Some(open) = guard.as_ref() {
+            let project = repo::load_project(&open.paths)?;
+            return Ok(Some(project_info(&open.paths, &project)?));
+        }
+    }
+
+    // Fresh launch: reopen the remembered project if it is still a valid
+    // TestHound repo; any failure falls back to onboarding.
+    let Some(file) = last_project_file(&app) else {
         return Ok(None);
     };
-    let project = repo::load_project(&open.paths)?;
-    Ok(Some(project_info(&open.paths, &project)?))
+    let Ok(saved) = std::fs::read_to_string(&file) else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(saved.trim());
+    if !root.is_dir() {
+        return Ok(None);
+    }
+    let Some(th_dir) = repo::detect(&root) else {
+        return Ok(None);
+    };
+    let paths = Paths::new(&root, &th_dir);
+    let Ok(project) = repo::load_project(&paths) else {
+        return Ok(None);
+    };
+    let Ok(info) = project_info(&paths, &project) else {
+        return Ok(None);
+    };
+    *state.open.lock().unwrap() = Some(Open {
+        paths,
+        playwright: info.playwright_detected,
+    });
+    Ok(Some(info))
 }
 
 /// Create a new test suite from a display name. The id is a slug of the name;
