@@ -95,6 +95,7 @@ pub fn run() {
             app::run_playwright,
             app::run_case_spec,
             app::open_trace,
+            app::open_url,
             app::list_agents,
             app::coverage,
             app::automation_context,

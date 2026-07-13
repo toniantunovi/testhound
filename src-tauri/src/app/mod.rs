@@ -650,6 +650,25 @@ pub fn open_trace(path: String, state: tauri::State<AppState>) -> Result<()> {
     playwright::show_trace(&state.paths()?, &path)
 }
 
+/// Open an http(s) link in the user's default browser. Scheme-checked so the
+/// assistant panel can safely linkify arbitrary model output.
+#[tauri::command]
+pub fn open_url(url: String) -> Result<()> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err(Error::Other(format!("refusing to open non-http url: {url}")));
+    }
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .args(["/C", "start", "", &url])
+        .spawn();
+    status.map_err(|e| Error::Other(format!("failed to open url: {e}")))?;
+    Ok(())
+}
+
 // ---- AI automation (docs/05-ai-automation.md, roadmap M4) ---------------------
 
 /// Which coding agents (Claude Code / Codex) are installed on PATH.

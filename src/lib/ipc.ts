@@ -156,6 +156,7 @@ export const api = {
   runCaseSpec: (caseId: string, headed: boolean) =>
     invoke<void>("run_case_spec", { caseId, headed }),
   openTrace: (path: string) => invoke<void>("open_trace", { path }),
+  openUrl: (url: string) => invoke<void>("open_url", { url }),
 
   // AI automation (M4)
   listAgents: () => invoke<AgentAvailability[]>("list_agents"),

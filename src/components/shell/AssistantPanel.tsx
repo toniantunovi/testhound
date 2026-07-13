@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
@@ -323,7 +323,7 @@ export function AssistantPanel() {
 function Message({ msg }: { msg: import("@/store/assistant").AssistantMsg }) {
   if (msg.role === "user") {
     return (
-      <div className="ml-6 self-end rounded-card bg-bg-surface-2 px-3 py-2 text-sm text-text-primary">
+      <div className="selectable ml-6 self-end whitespace-pre-wrap rounded-card bg-bg-surface-2 px-3 py-2 text-sm text-text-primary">
         {msg.content}
       </div>
     );
@@ -338,7 +338,7 @@ function Message({ msg }: { msg: import("@/store/assistant").AssistantMsg }) {
               className="flex items-center gap-1.5 font-mono text-[11px] text-text-muted"
             >
               <Wrench size={10} className="shrink-0 text-brand-accent" />
-              <span className="truncate">{line}</span>
+              <span className="selectable truncate">{line}</span>
             </div>
           ))}
         </div>
@@ -346,11 +346,11 @@ function Message({ msg }: { msg: import("@/store/assistant").AssistantMsg }) {
       {(msg.content || msg.streaming) && (
         <div
           className={cn(
-            "whitespace-pre-wrap text-sm leading-relaxed",
+            "selectable whitespace-pre-wrap text-sm leading-relaxed",
             msg.error ? "text-status-failed" : "text-text-secondary",
           )}
         >
-          {msg.content || (msg.streaming ? "Thinking…" : "")}
+          <Linkified text={msg.content || (msg.streaming ? "Thinking…" : "")} />
           {msg.streaming && (
             <span className="ml-0.5 inline-block h-3.5 w-1.5 animate-pulse bg-brand-accent align-middle" />
           )}
@@ -358,4 +358,34 @@ function Message({ msg }: { msg: import("@/store/assistant").AssistantMsg }) {
       )}
     </div>
   );
+}
+
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+
+/** Render plain assistant text with http(s) URLs as links that open in the
+ *  system browser (the webview itself must never navigate away). */
+function Linkified({ text }: { text: string }) {
+  const nodes: ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    // Trailing punctuation belongs to the sentence, not the URL.
+    const url = m[0].replace(/[.,;:!?]+$/, "");
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    nodes.push(
+      <a
+        key={`${m.index}-${url}`}
+        href={url}
+        onClick={(e) => {
+          e.preventDefault();
+          void api.openUrl(url);
+        }}
+        className="text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary"
+      >
+        {url}
+      </a>,
+    );
+    last = m.index + url.length;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return <>{nodes}</>;
 }
