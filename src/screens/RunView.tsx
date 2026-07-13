@@ -14,6 +14,7 @@ import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
 import { TriageModal } from "@/screens/TriageModal";
+import { RunCasePanel, STATUS_KEYS } from "@/screens/RunCasePanel";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import {
   AutomationBadge,
@@ -22,16 +23,6 @@ import {
 } from "@/components/ui/Badge";
 import { RunProgressBar } from "@/components/ui/RunProgressBar";
 import { Button } from "@/components/ui/Button";
-
-// Compact per-row status setter. Untested has no button; it's the default.
-const STATUS_KEYS: { status: ResultStatus; label: string; className: string }[] =
-  [
-    { status: "passed", label: "Pass", className: "text-status-passed" },
-    { status: "failed", label: "Fail", className: "text-status-failed" },
-    { status: "blocked", label: "Block", className: "text-status-blocked" },
-    { status: "retest", label: "Retest", className: "text-status-retest" },
-    { status: "skipped", label: "Skip", className: "text-status-skipped" },
-  ];
 
 export function RunView() {
   const id = useSession((s) => s.openRunId);
@@ -42,6 +33,8 @@ export function RunView() {
     null,
   );
   const [headed, setHeaded] = useState(false);
+  /** Case open in the read-and-record slide-over, if any. */
+  const [panelCaseId, setPanelCaseId] = useState<string | null>(null);
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -96,6 +89,10 @@ export function RunView() {
   const automatable = rows.filter(
     (r) => r.automationState === "linked" || r.automationState === "drifted",
   ).length;
+  const panelIdx = panelCaseId
+    ? rows.findIndex((r) => r.case === panelCaseId)
+    : -1;
+  const panelRow = panelIdx >= 0 ? rows[panelIdx] : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -226,6 +223,7 @@ export function RunView() {
                 onTriage={() =>
                   setTriage({ caseId: row.case, title: row.title })
                 }
+                onOpen={() => setPanelCaseId(row.case)}
               />
             ))}
           </tbody>
@@ -240,6 +238,33 @@ export function RunView() {
           onClose={() => setTriage(null)}
         />
       )}
+
+      {panelRow && (
+        <RunCasePanel
+          row={panelRow}
+          index={panelIdx}
+          total={rows.length}
+          pending={
+            setResult.isPending && setResult.variables?.caseId === panelRow.case
+          }
+          onClose={() => setPanelCaseId(null)}
+          onNav={(dir) => {
+            const next = rows[panelIdx + dir];
+            if (next) setPanelCaseId(next.case);
+          }}
+          onSetStatus={(status) =>
+            setResult.mutate({ caseId: panelRow.case, status, comment: null })
+          }
+          onSetComment={(comment) =>
+            setResult.mutate({
+              caseId: panelRow.case,
+              status:
+                panelRow.status === "untested" ? "retest" : panelRow.status,
+              comment,
+            })
+          }
+        />
+      )}
     </div>
   );
 }
@@ -250,12 +275,14 @@ function CaseRow({
   onSetStatus,
   onSetComment,
   onTriage,
+  onOpen,
 }: {
   row: RunResultRow;
   pending: boolean;
   onSetStatus: (status: ResultStatus) => void;
   onSetComment: (comment: string) => void;
   onTriage: () => void;
+  onOpen: () => void;
 }) {
   const [comment, setComment] = useState(row.comment ?? "");
   useEffect(() => setComment(row.comment ?? ""), [row.comment]);
@@ -268,10 +295,22 @@ function CaseRow({
       )}
     >
       <td className="py-3 pl-6 font-mono text-xs text-brand-primary">
-        {row.case}
+        <button
+          onClick={onOpen}
+          title="Open case"
+          className="hover:underline decoration-dotted underline-offset-2"
+        >
+          {row.case}
+        </button>
       </td>
       <td className="py-3 pr-4">
-        <div className="text-text-primary">{row.title}</div>
+        <button
+          onClick={onOpen}
+          title="Open case"
+          className="text-left text-text-primary hover:text-brand-primary"
+        >
+          {row.title}
+        </button>
         <div className="mt-1 flex items-center gap-2">
           <span className="font-mono text-[11px] text-text-muted">
             {row.suite}

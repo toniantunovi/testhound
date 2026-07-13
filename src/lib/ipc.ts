@@ -69,6 +69,22 @@ function normalizeCase(c: TestCase): TestCase {
   };
 }
 
+// Same story for runs: a run created without configurations (or defined via a
+// filter/explicit picks) arrives without `configuration` and the `includes`
+// arrays, and RunView indexes into them directly.
+function normalizeRun(r: Run): Run {
+  return {
+    ...r,
+    configuration: r.configuration ?? [],
+    includes: {
+      mode: r.includes?.mode ?? "suite",
+      query: r.includes?.query ?? null,
+      suites: r.includes?.suites ?? [],
+      cases: r.includes?.cases ?? [],
+    },
+  };
+}
+
 export const api = {
   inspectRepo: (path: string) => invoke<RepoInfo>("inspect_repo", { path }),
   cloneRepo: (url: string, dest: string) =>
@@ -96,14 +112,19 @@ export const api = {
   dashboard: () => invoke<Dashboard>("dashboard"),
 
   listRuns: () => invoke<RunSummary[]>("list_runs"),
-  getRun: (id: string) => invoke<RunDetail>("get_run", { id }),
+  getRun: (id: string) =>
+    invoke<RunDetail>("get_run", { id }).then((d) => ({
+      ...d,
+      run: normalizeRun(d.run),
+    })),
   previewRun: (
     mode: IncludeMode,
     query: string | null,
     suites: string[],
     cases: string[],
   ) => invoke<CaseSummary[]>("preview_run", { mode, query, suites, cases }),
-  createRun: (input: CreateRunInput) => invoke<Run>("create_run", { ...input }),
+  createRun: (input: CreateRunInput) =>
+    invoke<Run>("create_run", { ...input }).then(normalizeRun),
   setResult: (
     runId: string,
     caseId: string,
@@ -119,7 +140,7 @@ export const api = {
       executedBy,
     }),
   setRunState: (runId: string, runState: Run["state"]) =>
-    invoke<Run>("set_run_state", { runId, runState }),
+    invoke<Run>("set_run_state", { runId, runState }).then(normalizeRun),
 
   listMilestones: () => invoke<Milestone[]>("list_milestones"),
   listConfigurations: () => invoke<Configuration[]>("list_configurations"),
