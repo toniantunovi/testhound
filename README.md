@@ -45,7 +45,23 @@ TestHound is a modern alternative to tools like TestRail, built as a Tauri deskt
 - Test case history with per-commit diffs, blame, and restore, plus a drift callout when an edit changed step expectations.
 - Command palette (⌘K) and a live repo bar with branch switching, fast-forward sync, and an uncommitted-changes indicator.
 
-## Getting started
+## Install
+
+**macOS and Linux**, one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/toniantunovi/testhound/main/install.sh | sh
+```
+
+The script detects your platform, downloads the matching build from the [latest release](https://github.com/toniantunovi/testhound/releases/latest), and installs it (macOS: `/Applications/TestHound.app`; Linux: `~/.local/bin/testhound`). Set `TESTHOUND_INSTALL_DIR` to choose a different macOS destination.
+
+**Windows**: download the `.exe` installer (or `.msi`) from the [latest release](https://github.com/toniantunovi/testhound/releases/latest).
+
+> **Note for manual macOS downloads:** release builds are not notarized yet, so after a browser download Gatekeeper reports the app as "damaged". That is a quarantine flag, not corruption. The install script handles it; for a manual download, copy the app to `/Applications` and run `xattr -cr /Applications/TestHound.app` once.
+
+Once installed, the app keeps itself up to date via the in-app updater (Settings > Updates).
+
+## Developing
 
 Prerequisites: [Node.js](https://nodejs.org) with [pnpm](https://pnpm.io), and the [Tauri v2 toolchain](https://v2.tauri.app/start/prerequisites/) (Rust plus platform dependencies).
 
@@ -83,3 +99,5 @@ git push origin v0.2.0
 ```
 
 To enable signed updates for a fork: generate a keypair with `pnpm tauri signer generate -w ~/.tauri/testhound.key`, replace `plugins.updater.pubkey` and the endpoint owner/repo in `src-tauri/tauri.conf.json`, and set the `TAURI_SIGNING_PRIVATE_KEY` repo secret (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password).
+
+macOS builds are ad-hoc signed until the Apple signing secrets are configured. To produce notarized builds, set the `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` repo secrets (see the comments in `release.yml`); `tauri-action` then signs and notarizes automatically.
