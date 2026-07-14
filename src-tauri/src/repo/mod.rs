@@ -321,6 +321,74 @@ pub fn create_suite(paths: &Paths, suite: &Suite) -> Result<()> {
     Ok(())
 }
 
+/// Rename a suite's display name. The id and directory stay stable so case
+/// front matter (`suite: <id>`) and Git history are untouched.
+pub fn rename_suite(paths: &Paths, id: &str, name: &str) -> Result<()> {
+    let yml = paths.suites_dir().join(id).join("suite.yml");
+    let content =
+        fs::read_to_string(&yml).map_err(|_| Error::Other(format!("suite not found: {id}")))?;
+    let mut suite: Suite = serde_yaml::from_str(&content)?;
+    suite.name = name.to_string();
+    fs::write(&yml, serde_yaml::to_string(&suite)?)?;
+    Ok(())
+}
+
+/// Delete a suite directory including all its cases. Returns the ids of the
+/// cases that were removed with it so callers can clean up automation links.
+/// The change is left uncommitted for the user to review.
+pub fn delete_suite(paths: &Paths, id: &str) -> Result<Vec<String>> {
+    let dir = paths.suites_dir().join(id);
+    if !dir.join("suite.yml").is_file() {
+        return Err(Error::Other(format!("suite not found: {id}")));
+    }
+    let removed = list_cases(paths)?
+        .into_iter()
+        .filter(|c| c.suite == id)
+        .map(|c| c.id)
+        .collect();
+    fs::remove_dir_all(&dir)?;
+    Ok(removed)
+}
+
+/// Move a case into another suite: rewrite `suite:` in the front matter and
+/// relocate the file, keeping its filename so Git can detect the rename.
+/// Automation links key on the case id and stay valid.
+pub fn move_case(paths: &Paths, id: &str, suite: &str) -> Result<TestCase> {
+    let old_path = case_path(paths, id)?;
+    let mut case = case_file::parse(&fs::read_to_string(&old_path)?)?;
+    if case.front.suite == suite {
+        return Ok(case);
+    }
+    case.front.suite = suite.to_string();
+    case.front.section = None;
+    let cases_dir = paths.suites_dir().join(suite).join("cases");
+    fs::create_dir_all(&cases_dir)?;
+    let file_name = old_path
+        .file_name()
+        .ok_or_else(|| Error::Other(format!("bad case path for {id}")))?
+        .to_os_string();
+    fs::write(cases_dir.join(&file_name), case_file::serialize(&case)?)?;
+    fs::remove_file(&old_path)?;
+    load_case(paths, id)
+}
+
+/// Duplicate a case under a fresh id, optionally into another suite. The copy
+/// starts unautomated: it must not share the source's spec links.
+pub fn duplicate_case(paths: &Paths, id: &str, suite: Option<&str>) -> Result<TestCase> {
+    let source = load_case(paths, id)?;
+    let mut copy = source.clone();
+    copy.front.id = next_case_id(paths)?;
+    copy.front.title = format!("{} (copy)", source.front.title);
+    if let Some(s) = suite {
+        copy.front.suite = s.to_string();
+        copy.front.section = None;
+    }
+    copy.front.automation = Automation::default();
+    copy.front.created = None;
+    copy.front.updated = None;
+    save_case(paths, &copy)
+}
+
 /// Allocate the next case id from `project.yml` and persist the increment.
 pub fn next_case_id(paths: &Paths) -> Result<String> {
     let mut project = load_project(paths)?;

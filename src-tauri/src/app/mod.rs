@@ -262,6 +262,64 @@ pub async fn create_suite(name: String, state: tauri::State<'_, AppState>) -> Re
     Ok(id)
 }
 
+/// Rename a suite's display name; the id (and thus directory and case front
+/// matter) is stable. The change lands in the working tree for review.
+#[tauri::command]
+pub async fn rename_suite(
+    id: String,
+    name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Other("suite name is empty".into()));
+    }
+    repo::rename_suite(&paths, &id, name)
+}
+
+/// Delete a suite with all its cases, dropping their `automation/links.yml`
+/// entries. The change lands in the working tree for review; nothing is
+/// committed.
+#[tauri::command]
+pub async fn delete_suite(id: String, state: tauri::State<'_, AppState>) -> Result<()> {
+    let paths = state.paths()?;
+    for case in repo::delete_suite(&paths, &id)? {
+        automation::remove_link(&paths, &case)?;
+    }
+    Ok(())
+}
+
+/// Move a case into another suite (front matter + file location).
+#[tauri::command]
+pub async fn move_case(
+    id: String,
+    suite: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<TestCase> {
+    let paths = state.paths()?;
+    if !repo::list_suites(&paths)?.iter().any(|s| s.id == suite) {
+        return Err(Error::Other(format!("suite not found: {suite}")));
+    }
+    repo::move_case(&paths, &id, &suite)
+}
+
+/// Duplicate a case under a fresh id, optionally into another suite.
+#[tauri::command]
+pub async fn duplicate_case(
+    id: String,
+    suite: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<TestCase> {
+    let paths = state.paths()?;
+    if let Some(s) = &suite {
+        if !repo::list_suites(&paths)?.iter().any(|x| &x.id == s) {
+            return Err(Error::Other(format!("suite not found: {s}")));
+        }
+    }
+    repo::duplicate_case(&paths, &id, suite.as_deref())
+}
+
 #[tauri::command]
 pub async fn list_suites(state: tauri::State<'_, AppState>) -> Result<Vec<SuiteTree>> {
     repo::list_suites(&state.paths()?)
