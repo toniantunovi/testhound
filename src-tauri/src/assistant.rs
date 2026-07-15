@@ -152,6 +152,22 @@ STYLE
 - Be concise. Briefly say what you are about to do, do it, then summarize exactly
   which files you created or changed. If genuinely ambiguous (which suite, which
   column maps to which field), ask one focused question instead of guessing."#
+    ) + &setup_section(paths)
+}
+
+/// The team's automation setup notes (`automation/setup.md`), appended to the
+/// preamble when present so every turn knows how to start the app, which test
+/// accounts exist, and the local conventions. Secrets are never in this file;
+/// they arrive as environment variables from the configured test target.
+fn setup_section(paths: &Paths) -> String {
+    let setup = crate::automation::load_setup(paths);
+    if setup.trim().is_empty() {
+        return String::new();
+    }
+    format!(
+        "\n\nPROJECT AUTOMATION SETUP NOTES (maintained by the team; follow them \
+when starting the app, picking test accounts, or running Playwright):\n{}",
+        setup.trim()
     )
 }
 

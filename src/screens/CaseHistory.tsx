@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, History, RotateCcw, Sparkles } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { useSession } from "@/store/session";
-import { useAgentDrawer } from "@/store/agent";
+import { useAssistant } from "@/store/assistant";
 import { useActivity } from "@/store/activity";
 import { DiffView } from "@/components/ui/DiffView";
 import { Button } from "@/components/ui/Button";
@@ -14,7 +14,7 @@ import { cn, initials, relativeTime } from "@/lib/utils";
 export function CaseHistory() {
   const id = useSession((s) => s.openCaseId);
   const openCase = useSession((s) => s.openCase);
-  const openDrawer = useAgentDrawer((s) => s.open);
+  const prefillAssistant = useAssistant((s) => s.prefill);
   const push = useActivity((s) => s.push);
   const qc = useQueryClient();
 
@@ -178,7 +178,11 @@ export function CaseHistory() {
                   size="sm"
                   className="bg-brand-accent hover:bg-brand-accent/90"
                   onClick={() =>
-                    id && openDrawer({ caseId: id, caseTitle: id, update: true })
+                    id &&
+                    api
+                      .generationPrompt(id, true)
+                      .then(prefillAssistant)
+                      .catch((e) => window.alert(errMsg(e)))
                   }
                 >
                   <Sparkles size={13} /> Update spec

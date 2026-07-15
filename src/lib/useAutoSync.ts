@@ -32,7 +32,6 @@ import { usePrefs } from "@/store/prefs";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
 import { useAssistant } from "@/store/assistant";
-import { useAgentDrawer } from "@/store/agent";
 
 /** TestHound's changes must be unchanged this long before they auto-commit. */
 const IDLE_MS = 30_000;
@@ -49,7 +48,6 @@ export function useAutoSync() {
   const project = useSession((s) => s.project);
   const view = useSession((s) => s.view);
   const assistantBusy = useAssistant((s) => s.busy);
-  const agentBusy = useAgentDrawer((s) => s.caseId !== null);
   const push = useActivity((s) => s.push);
   const finish = useActivity((s) => s.finish);
   const qc = useQueryClient();
@@ -137,7 +135,7 @@ export function useAutoSync() {
   const tick = useRef(() => {});
   tick.current = () => {
     if (!enabled || !project || !git) return;
-    const busy = commit.isPending || syncFlow.pending || assistantBusy || agentBusy;
+    const busy = commit.isPending || syncFlow.pending || assistantBusy;
     const halted =
       git.detached ||
       conflicts?.merging ||

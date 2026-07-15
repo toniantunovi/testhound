@@ -1,27 +1,42 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { FileCode, FileWarning, RefreshCw, Sparkles } from "lucide-react";
-import { api } from "@/lib/ipc";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Check,
+  FileCode,
+  FileWarning,
+  KeyRound,
+  RefreshCw,
+  Save,
+  Sparkles,
+  TriangleAlert,
+} from "lucide-react";
+import { api, errMsg } from "@/lib/ipc";
 import type { Coverage, CoverageRow } from "@/lib/types";
-import { useAgentDrawer } from "@/store/agent";
+import { useAssistant } from "@/store/assistant";
 import { useSession } from "@/store/session";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { SpecEditorModal } from "./SpecEditorModal";
 import { cn } from "@/lib/utils";
 
-type Tab = "all" | "unautomated" | "drifted" | "orphans";
+type Tab = "all" | "unautomated" | "drifted" | "orphans" | "setup";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "all", label: "All cases" },
   { id: "unautomated", label: "Unautomated P1" },
   { id: "drifted", label: "Drifted" },
   { id: "orphans", label: "Orphan specs" },
+  { id: "setup", label: "Setup" },
 ];
 
 export function Automation() {
   const [tab, setTab] = useState<Tab>("all");
-  const openDrawer = useAgentDrawer((s) => s.open);
+  // Repo-relative path of the spec being viewed/edited, if the modal is open.
+  const [openSpecPath, setOpenSpecPath] = useState<string | null>(null);
+  const prefillAssistant = useAssistant((s) => s.prefill);
   const openCase = useSession((s) => s.openCase);
+  const focusCase = useSession((s) => s.automationFocus);
+  const clearFocus = useSession((s) => s.clearAutomationFocus);
 
   const { data: cov, isLoading } = useQuery({
     queryKey: ["coverage"],
@@ -30,8 +45,28 @@ export function Automation() {
 
   const rows = useMemo(() => filterRows(cov, tab), [cov, tab]);
 
+  // Arriving from a case's automation badge: bring the case's row into view
+  // on the "All cases" tab, then let the highlight fade.
+  useEffect(() => {
+    if (!focusCase || !cov) return;
+    if (tab !== "all") {
+      setTab("all");
+      return;
+    }
+    document
+      .querySelector(`[data-case-row="${focusCase}"]`)
+      ?.scrollIntoView({ block: "center" });
+    const timer = setTimeout(clearFocus, 2000);
+    return () => clearTimeout(timer);
+  }, [focusCase, cov, tab, clearFocus]);
+
+  // Stage the generation prompt in the assistant composer; the user reviews,
+  // optionally edits, and sends it themselves.
   const generate = (row: CoverageRow, update: boolean) =>
-    openDrawer({ caseId: row.case, caseTitle: row.title, update });
+    api
+      .generationPrompt(row.case, update)
+      .then(prefillAssistant)
+      .catch((e) => window.alert(errMsg(e)));
 
   return (
     <div className="flex h-full flex-col">
@@ -96,12 +131,14 @@ export function Automation() {
 
       {/* Body */}
       <div className="min-h-0 flex-1 overflow-auto">
-        {isLoading ? (
+        {tab === "setup" ? (
+          <SetupPanel />
+        ) : isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
             Loading coverage…
           </div>
         ) : tab === "orphans" ? (
-          <OrphanList orphans={cov?.orphans ?? []} />
+          <OrphanList orphans={cov?.orphans ?? []} onView={setOpenSpecPath} />
         ) : rows.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
             Nothing here. {tab === "drifted" ? "No specs have drifted." : ""}
@@ -121,7 +158,11 @@ export function Automation() {
               {rows.map((row) => (
                 <tr
                   key={row.case}
-                  className="border-b border-border-subtle/60 align-top hover:bg-bg-surface/60"
+                  data-case-row={row.case}
+                  className={cn(
+                    "border-b border-border-subtle/60 align-top transition-colors duration-700 hover:bg-bg-surface/60",
+                    focusCase === row.case && "bg-brand-primary/15",
+                  )}
                 >
                   <td className="py-3 pl-6 font-mono text-xs text-brand-primary">
                     <button onClick={() => openCase(row.case)}>{row.case}</button>
@@ -133,15 +174,17 @@ export function Automation() {
                     >
                       {row.title}
                     </button>
-                    <div className="mt-1 flex flex-col gap-0.5">
+                    <div className="mt-1 flex flex-col items-start gap-0.5">
                       {row.specs.map((s) => (
-                        <span
+                        <button
                           key={s}
-                          className="flex items-center gap-1.5 font-mono text-[11px] text-text-muted"
+                          title="View and edit the spec code"
+                          onClick={() => setOpenSpecPath(s.split("#")[0])}
+                          className="flex items-center gap-1.5 rounded-control font-mono text-[11px] text-text-muted hover:text-text-primary hover:underline"
                         >
                           <FileCode size={10} className="text-brand-accent" />
                           {s}
-                        </span>
+                        </button>
                       ))}
                     </div>
                   </td>
@@ -152,7 +195,22 @@ export function Automation() {
                     <AutomationBadge state={row.state} />
                   </td>
                   <td className="py-3 pr-6">
-                    <RowAction row={row} onGenerate={generate} />
+                    <div className="flex flex-col items-start gap-1.5">
+                      <RowAction row={row} onGenerate={generate} />
+                      {row.specs.length > 0 && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          title="View and edit the spec code"
+                          onClick={() =>
+                            setOpenSpecPath(row.specs[0].split("#")[0])
+                          }
+                        >
+                          <FileCode size={12} className="text-brand-accent" />
+                          View code
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -160,6 +218,13 @@ export function Automation() {
           </table>
         )}
       </div>
+
+      {openSpecPath && (
+        <SpecEditorModal
+          path={openSpecPath}
+          onClose={() => setOpenSpecPath(null)}
+        />
+      )}
     </div>
   );
 }
@@ -197,7 +262,187 @@ function RowAction({
   );
 }
 
-function OrphanList({ orphans }: { orphans: string[] }) {
+const SETUP_PLACEHOLDER = `Everything an agent (or a new teammate) needs to automate tests here, e.g.:
+
+## Starting the app
+- \`pnpm dev\`, app on http://localhost:3000
+
+## Environments
+- local: http://localhost:3000, staging: https://staging.example.com
+
+## Test accounts
+- Standard user: qa-user@example.com (password in TEST_USER_PASSWORD)
+- Admin: qa-admin@example.com (password in TEST_ADMIN_PASSWORD)
+
+## Data seeding / reset
+- \`pnpm db:seed\` before destructive flows
+
+## Conventions
+- Auth via the storageState setup project, do not log in per test
+- Prefer getByRole/getByTestId; fixtures live in tests/fixtures/`;
+
+/** Staged in the assistant when Playwright is missing; the user reviews and sends. */
+const PLAYWRIGHT_SETUP_PROMPT = `Set up Playwright for end-to-end testing in this repo:
+1. Add @playwright/test as a dev dependency using the repo's package manager.
+2. Create playwright.config.ts with testDir ./tests and use.baseURL read from process.env.BASE_URL.
+3. Run \`npx playwright install\` to download the browsers.
+4. Add a minimal smoke spec that opens the base URL, and verify the setup with \`npx playwright test --list\` followed by a headed run of the smoke spec.
+Finish with a short summary of what you set up and anything I still need to configure (like BASE_URL in TestHound's Settings).`;
+
+/** General test setup: detected Playwright facts, the committed setup notes
+ *  fed to agents, and the machine-local target env where credentials live. */
+function SetupPanel() {
+  const qc = useQueryClient();
+  const navigate = useSession((s) => s.navigate);
+  const prefillAssistant = useAssistant((s) => s.prefill);
+
+  const { data: pw } = useQuery({
+    queryKey: ["playwright-info"],
+    queryFn: api.playwrightInfo,
+  });
+  const { data: target } = useQuery({
+    queryKey: ["test-target"],
+    queryFn: api.getTestTarget,
+  });
+  const { data: setup } = useQuery({
+    queryKey: ["automation-setup"],
+    queryFn: api.automationSetup,
+  });
+
+  const [draft, setDraft] = useState<string | null>(null);
+  const text = draft ?? setup ?? "";
+  const dirty = draft !== null && draft !== (setup ?? "");
+
+  const save = useMutation({
+    mutationFn: (content: string) => api.saveAutomationSetup(content),
+    onSuccess: () => {
+      setDraft(null);
+      qc.invalidateQueries({ queryKey: ["automation-setup"] });
+      qc.invalidateQueries({ queryKey: ["git-status"] });
+    },
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  const envKeys = Object.keys(target?.env ?? {});
+
+  return (
+    <div className="flex max-w-3xl flex-col gap-4 p-6">
+      {/* Detected facts */}
+      <section className="rounded-card border border-border-subtle bg-bg-surface p-4">
+        <h2 className="text-sm font-semibold text-text-primary">Detected</h2>
+        <dl className="mt-2 grid grid-cols-[140px_1fr] gap-y-1.5 text-xs">
+          <dt className="text-text-muted">Playwright config</dt>
+          <dd className="font-mono text-text-secondary">
+            {pw?.config ?? (pw?.detected === false ? "not detected" : "…")}
+          </dd>
+          <dt className="text-text-muted">Local binary</dt>
+          <dd className="text-text-secondary">
+            {pw ? (pw.localBinary ? "node_modules/.bin/playwright" : "not installed") : "…"}
+          </dd>
+          <dt className="text-text-muted">Base URL</dt>
+          <dd className="font-mono text-text-secondary">
+            {target ? (target.baseUrl?.trim() || "not set") : "…"}
+          </dd>
+        </dl>
+        {pw && (!pw.detected || !pw.localBinary) && (
+          <div className="mt-3 flex items-start gap-2 rounded-card border border-status-blocked/30 bg-status-blocked/10 p-3 text-xs text-status-blocked">
+            <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+            <span className="flex-1">
+              {pw.detected
+                ? "A Playwright config exists but no local Playwright install was found. Agents need it to write and verify specs."
+                : "Playwright is not set up in this repo. Agents need it to write and verify specs."}
+            </span>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="shrink-0"
+              onClick={() => prefillAssistant(PLAYWRIGHT_SETUP_PROMPT)}
+            >
+              <Sparkles size={12} className="text-brand-accent" />
+              Set up with assistant
+            </Button>
+          </div>
+        )}
+      </section>
+
+      {/* Committed setup notes */}
+      <section className="rounded-card border border-border-subtle bg-bg-surface p-4">
+        <div className="flex items-center gap-2">
+          <h2 className="flex-1 text-sm font-semibold text-text-primary">
+            Setup notes
+          </h2>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!dirty || save.isPending}
+            onClick={() => save.mutate(text)}
+          >
+            {save.isSuccess && !dirty ? <Check size={13} /> : <Save size={13} />}
+            {dirty ? "Save" : "Saved"}
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-text-muted">
+          Committed to the repo as{" "}
+          <span className="font-mono">automation/setup.md</span> and handed to
+          the agent with every generation prompt and assistant turn: how to
+          start the app, environments, test accounts, seeding, and selector
+          conventions. Reference credential env var names here; never paste
+          secret values.
+        </p>
+        <textarea
+          value={text}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={SETUP_PLACEHOLDER}
+          spellCheck={false}
+          className="selectable mt-3 h-72 w-full resize-y rounded-card border border-border-subtle bg-bg-base p-3 font-mono text-[12px] leading-relaxed text-text-primary placeholder:text-text-muted/60 focus:border-border-strong focus:outline-none"
+        />
+      </section>
+
+      {/* Machine-local environment / credentials */}
+      <section className="rounded-card border border-border-subtle bg-bg-surface p-4">
+        <div className="flex items-center gap-2">
+          <h2 className="flex-1 text-sm font-semibold text-text-primary">
+            Environment variables
+          </h2>
+          <Button variant="secondary" size="sm" onClick={() => navigate("settings")}>
+            Edit in Settings
+          </Button>
+        </div>
+        <p className="mt-1 text-xs text-text-muted">
+          Stored locally (gitignored) per machine and exported to every
+          Playwright run and agent session, so specs and agents read secrets
+          from the environment instead of files.
+        </p>
+        {envKeys.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            {envKeys.map((k) => (
+              <span
+                key={k}
+                className="inline-flex items-center gap-1.5 rounded-control border border-border-subtle bg-bg-base px-2 py-1 font-mono text-[11px] text-text-secondary"
+              >
+                <KeyRound size={11} className="text-brand-accent" />
+                {k}
+                <span className="text-status-passed">set</span>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-text-muted">
+            None configured on this machine.
+          </p>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function OrphanList({
+  orphans,
+  onView,
+}: {
+  orphans: string[];
+  onView: (path: string) => void;
+}) {
   if (orphans.length === 0) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-text-muted">
@@ -213,13 +458,15 @@ function OrphanList({ orphans }: { orphans: string[] }) {
       </p>
       <div className="flex flex-col gap-1.5">
         {orphans.map((path) => (
-          <div
+          <button
             key={path}
-            className="flex items-center gap-2 rounded-card border border-border-subtle bg-bg-surface px-3 py-2 font-mono text-xs text-text-secondary"
+            title="View and edit the spec code"
+            onClick={() => onView(path)}
+            className="flex items-center gap-2 rounded-card border border-border-subtle bg-bg-surface px-3 py-2 text-left font-mono text-xs text-text-secondary hover:border-border-strong hover:text-text-primary"
           >
             <FileWarning size={13} className="text-status-blocked" />
             {path}
-          </div>
+          </button>
         ))}
       </div>
     </div>
@@ -271,6 +518,7 @@ function filterRows(cov: Coverage | undefined, tab: Tab): CoverageRow[] {
     case "drifted":
       return cov.rows.filter((r) => r.state === "drifted");
     case "orphans":
+    case "setup":
       return [];
     default:
       return cov.rows;
@@ -288,5 +536,7 @@ function tabCount(cov: Coverage | undefined, tab: Tab): number | null {
       return cov.drifted;
     case "orphans":
       return cov.orphans.length;
+    case "setup":
+      return null;
   }
 }

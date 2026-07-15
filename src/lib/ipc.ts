@@ -166,12 +166,18 @@ export const api = {
     invoke<void>("run_case_spec", { caseId, headed }),
   openTrace: (path: string) => invoke<void>("open_trace", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
+  openInEditor: (path: string) => invoke<void>("open_in_editor", { path }),
 
   // AI automation (M4)
   listAgents: () => invoke<AgentAvailability[]>("list_agents"),
   coverage: () => invoke<Coverage>("coverage"),
   automationContext: (id: string) =>
     invoke<RepoContext>("automation_context", { id }),
+  generationPrompt: (id: string, update: boolean) =>
+    invoke<string>("generation_prompt", { id, update }),
+  automationSetup: () => invoke<string>("automation_setup"),
+  saveAutomationSetup: (content: string) =>
+    invoke<void>("save_automation_setup", { content }),
   fileDiff: (path: string) => invoke<FileDiff>("file_diff", { path }),
   readSpec: (path: string) => invoke<string>("read_spec", { path }),
   writeSpec: (path: string, content: string) =>

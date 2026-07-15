@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowUp,
   ChevronDown,
   Plus,
+  RefreshCw,
   Sparkles,
   Square,
+  TriangleAlert,
   Wrench,
   X,
 } from "lucide-react";
@@ -56,6 +58,8 @@ export function AssistantPanel() {
   const appendActivity = useAssistant((s) => s.appendActivity);
   const finishTurn = useAssistant((s) => s.finishTurn);
   const reset = useAssistant((s) => s.reset);
+  const draft = useAssistant((s) => s.draft);
+  const clearDraft = useAssistant((s) => s.clearDraft);
 
   const qc = useQueryClient();
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
@@ -66,14 +70,18 @@ export function AssistantPanel() {
   const panelRef = useRef<HTMLElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load installed agents and default to the first available one.
-  useEffect(() => {
+  // Load installed agents and default to the first available one. Re-run via
+  // "Check again" after the user installs a CLI; no app restart needed.
+  const refreshAgents = useCallback(() => {
     api.listAgents().then((list) => {
       setAgents(list);
       const firstAvail = list.find((a) => a.available) ?? list[0];
       if (firstAvail) setAgent(firstAvail.id);
     });
   }, [setAgent]);
+  useEffect(() => {
+    refreshAgents();
+  }, [refreshAgents]);
 
   // Subscribe to streamed assistant events for the lifetime of the panel.
   useEffect(() => {
@@ -97,6 +105,23 @@ export function AssistantPanel() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
+
+  // A staged prompt (e.g. from a Generate button) lands in the composer for
+  // the user to review and send; nothing runs until they confirm.
+  useEffect(() => {
+    if (draft === null) return;
+    setInput(draft);
+    clearDraft();
+    setTimeout(() => textareaRef.current?.focus(), 0);
+  }, [draft, clearDraft]);
+
+  // Grow the composer with its content (the max-height cap adds a scrollbar).
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input, open]);
 
   // Native file drop: Tauri gives us real filesystem paths. When files are
   // dropped over this panel, append their paths to the composer so the user can
@@ -144,10 +169,11 @@ export function AssistantPanel() {
   if (!open) return null;
 
   const activeAgent = agents.find((a) => a.id === agentId);
+  const noAgents = agents.length > 0 && !agents.some((a) => a.available);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || busy) return;
+    if (!trimmed || busy || noAgents) return;
     const turnId = newTurnId();
     const history: ChatMessage[] = messages
       .filter((m) => !m.streaming && !m.error)
@@ -248,24 +274,27 @@ export function AssistantPanel() {
 
       {/* Transcript */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto px-3 py-3">
+        {noAgents && <NoAgentsBanner onRefresh={refreshAgents} />}
         {messages.length === 0 ? (
-          <div className="flex h-full flex-col justify-center gap-3">
-            <p className="text-sm text-text-secondary">
-              Ask me to work on your test data. I edit files directly; review
-              changes in the Changes panel before committing.
-            </p>
-            <div className="flex flex-col gap-1.5">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => send(s)}
-                  className="rounded-card border border-border-subtle bg-bg-base px-3 py-2 text-left text-xs text-text-secondary hover:border-border-strong hover:text-text-primary"
-                >
-                  {s}
-                </button>
-              ))}
+          noAgents ? null : (
+            <div className="flex h-full flex-col justify-center gap-3">
+              <p className="text-sm text-text-secondary">
+                Ask me to work on your test data. I edit files directly; review
+                changes in the Changes panel before committing.
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => send(s)}
+                    className="rounded-card border border-border-subtle bg-bg-base px-3 py-2 text-left text-xs text-text-secondary hover:border-border-strong hover:text-text-primary"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )
         ) : (
           <div className="flex flex-col gap-3">
             {messages.map((m) => (
@@ -290,11 +319,13 @@ export function AssistantPanel() {
             }}
             rows={1}
             placeholder={
-              busy
-                ? "Working…"
-                : "Ask anything, or drop a file to add its path…"
+              noAgents
+                ? "Install an agent CLI to use the assistant"
+                : busy
+                  ? "Working…"
+                  : "Ask anything, or drop a file to add its path…"
             }
-            disabled={busy}
+            disabled={busy || noAgents}
             className="max-h-40 min-h-[20px] flex-1 resize-none bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none disabled:opacity-60"
           />
           {busy ? (
@@ -308,7 +339,7 @@ export function AssistantPanel() {
           ) : (
             <button
               onClick={() => send(input)}
-              disabled={!input.trim()}
+              disabled={!input.trim() || noAgents}
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-brand-primary text-bg-base transition-colors hover:bg-brand-primary/90 disabled:opacity-40"
             >
               <ArrowUp size={15} />
@@ -317,6 +348,47 @@ export function AssistantPanel() {
         </div>
       </div>
     </aside>
+  );
+}
+
+/** Shown when no supported agent CLI is on PATH: how to install one, plus a
+ *  re-detect button so no app restart is needed after installing. */
+function NoAgentsBanner({ onRefresh }: { onRefresh: () => void }) {
+  return (
+    <div className="mb-3 rounded-card border border-status-blocked/30 bg-status-blocked/10 p-3">
+      <div className="flex items-start gap-2 text-xs text-status-blocked">
+        <TriangleAlert size={14} className="mt-0.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium">No coding agent found</p>
+          <p className="mt-1">
+            The assistant drives Claude Code or Codex. Install one, then check
+            again:
+          </p>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-col gap-1">
+        <code className="selectable rounded-control bg-bg-base px-2 py-1 font-mono text-[11px] text-text-secondary">
+          npm install -g @anthropic-ai/claude-code
+        </code>
+        <code className="selectable rounded-control bg-bg-base px-2 py-1 font-mono text-[11px] text-text-secondary">
+          npm install -g @openai/codex
+        </code>
+      </div>
+      <div className="mt-2 flex items-center gap-3">
+        <button
+          onClick={onRefresh}
+          className="inline-flex items-center gap-1.5 rounded-control border border-border-strong bg-bg-surface-2 px-2 py-1 text-xs text-text-primary hover:bg-bg-surface-2/70"
+        >
+          <RefreshCw size={11} /> Check again
+        </button>
+        <button
+          onClick={() => void api.openUrl("https://docs.anthropic.com/en/docs/claude-code/setup")}
+          className="text-xs text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary"
+        >
+          Claude Code setup docs
+        </button>
+      </div>
+    </div>
   );
 }
 

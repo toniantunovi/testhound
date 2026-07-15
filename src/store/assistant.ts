@@ -21,12 +21,17 @@ interface AssistantState {
   busy: boolean;
   /** The turn currently streaming, or null. Stale events are ignored. */
   currentTurnId: string | null;
+  /** Text waiting to be placed into the composer; the user confirms and sends. */
+  draft: string | null;
 
   toggle: () => void;
   setOpen: (open: boolean) => void;
   setAgent: (id: string) => void;
   /** Start a fresh conversation (drops session + transcript). */
   reset: () => void;
+  /** Open the panel with `text` staged in the composer, awaiting user send. */
+  prefill: (text: string) => void;
+  clearDraft: () => void;
 
   beginTurn: (turnId: string, userText: string) => void;
   appendText: (turnId: string, text: string) => void;
@@ -46,12 +51,15 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   messages: [],
   busy: false,
   currentTurnId: null,
+  draft: null,
 
   toggle: () => set((s) => ({ open: !s.open })),
   setOpen: (open) => set({ open }),
   setAgent: (agentId) => set({ agentId }),
   reset: () =>
     set({ messages: [], sessionId: null, busy: false, currentTurnId: null }),
+  prefill: (draft) => set({ draft, open: true }),
+  clearDraft: () => set({ draft: null }),
 
   beginTurn: (turnId, userText) =>
     set((s) => ({

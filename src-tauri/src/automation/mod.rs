@@ -102,6 +102,37 @@ fn detect_base_url(config: &Path) -> Option<String> {
     (!url.is_empty()).then(|| url.to_string())
 }
 
+// ---- automation setup notes -----------------------------------------------------
+
+/// The committed automation setup notes: how to start the app, environments,
+/// test accounts (names only, never secrets), seeding, auth strategy, and
+/// selector conventions. Fed to agents alongside the detected repo context.
+fn setup_path(paths: &Paths) -> std::path::PathBuf {
+    paths.th.join("automation").join("setup.md")
+}
+
+/// Load the setup notes, or an empty string if none have been written.
+pub fn load_setup(paths: &Paths) -> String {
+    std::fs::read_to_string(setup_path(paths)).unwrap_or_default()
+}
+
+/// Persist the setup notes. An empty document removes the file so the repo
+/// stays clean.
+pub fn save_setup(paths: &Paths, content: &str) -> Result<()> {
+    let path = setup_path(paths);
+    if content.trim().is_empty() {
+        if path.is_file() {
+            std::fs::remove_file(path)?;
+        }
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, content)?;
+    Ok(())
+}
+
 // ---- prompt building ----------------------------------------------------------
 
 /// Render a case's preconditions and steps into a compact, agent-friendly block.
@@ -144,6 +175,10 @@ fn context_lines(ctx: &RepoContext) -> String {
     out
 }
 
+/// Shared confinement footer of the headless generation prompts. The
+/// assistant-panel prompt deliberately does not carry it.
+const HEADLESS_FOOTER: &str = "Edit only files under the tests directory. Return only file edits.";
+
 /// Prompt to generate a fresh spec from a manual case (docs/05 §5.2).
 pub fn generate_prompt(case: &TestCase, ctx: &RepoContext) -> String {
     format!(
@@ -157,11 +192,12 @@ Requirements:\n\
 - Use role/testid selectors; add data-testid suggestions in comments where selectors are missing.\n\
 - Do not hardcode secrets or the base URL; read config from the Playwright config.\n\
 - Add a comment mapping each block to the manual step number.\n\
-Edit only files under the tests directory. Return only file edits.",
+{footer}",
         context = context_lines(ctx),
         target = ctx.target_path,
         rendered = render_case(case),
         title = case.front.title,
+        footer = HEADLESS_FOOTER,
     )
 }
 
@@ -182,11 +218,106 @@ Requirements:\n\
 - Keep the test() title exactly \"{title}\".\n\
 - Change only what the updated steps require; preserve unrelated assertions.\n\
 - Use role/testid selectors; read config from the Playwright config.\n\
-Edit only files under the tests directory. Return only file edits.",
+{footer}",
         specs = specs,
         context = context_lines(ctx),
         rendered = render_case(case),
         title = case.front.title,
+        footer = HEADLESS_FOOTER,
+    )
+}
+
+/// The generation/update prompt for the assistant panel, phrased for a CLI
+/// coding agent (Claude Code / Codex) with shell access. Unlike the confined
+/// headless prompts above it asks the agent to explore the app in a real
+/// browser before writing, verify the result in a headed run the user can
+/// watch, link the finished spec to the case, and close with a summary.
+///
+/// `setup` is the team's committed setup notes ([`load_setup`]); when present
+/// they ride along so the agent knows how to start the app, which accounts to
+/// use, and the local conventions.
+pub fn assistant_generation_prompt(
+    case: &TestCase,
+    ctx: &RepoContext,
+    update: bool,
+    setup: &str,
+) -> String {
+    let title = &case.front.title;
+    let setup_section = if setup.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Project automation setup notes (maintained by the team; follow them):\n{}\n\n",
+            setup.trim()
+        )
+    };
+    let missing_playwright = if ctx.config.is_none() {
+        "Note: no Playwright config was detected in this repo. Set Playwright up before the \
+workflow below: add @playwright/test as a dev dependency with the repo's package manager, \
+create a playwright.config.ts whose `use.baseURL` reads `process.env.BASE_URL`, and run \
+`npx playwright install` to download browsers.\n\n"
+    } else {
+        ""
+    };
+    let (task, write_step, requirements) = if update {
+        let specs = if case.front.automation.specs.is_empty() {
+            ctx.target_path.clone()
+        } else {
+            case.front.automation.specs.join(", ")
+        };
+        (
+            format!(
+                "The manual test case below changed; its linked Playwright spec has drifted. \
+Update the existing spec(s) ({specs}) to match the new steps, patching rather than \
+rewriting so custom assertions and helpers are preserved."
+            ),
+            "Patch the spec to match the updated steps, changing only what they require."
+                .to_string(),
+            format!(
+                "- Keep the test() title exactly \"{title}\".\n\
+- Change only what the updated steps require; preserve unrelated assertions.\n\
+- Use role/testid selectors; do not hardcode secrets or the base URL, read them from the Playwright config."
+            ),
+        )
+    } else {
+        (
+            format!(
+                "Write a Playwright test for the manual test case below. \
+Create the spec at: {}",
+                ctx.target_path
+            ),
+            "Write the spec, reusing existing page objects and fixtures where they exist."
+                .to_string(),
+            format!(
+                "- Exactly one test() titled exactly \"{title}\".\n\
+- Use role/testid selectors; add data-testid suggestions in comments where good selectors are missing.\n\
+- Do not hardcode secrets or the base URL; read them from the Playwright config.\n\
+- Add a comment mapping each block to the manual step number."
+            ),
+        )
+    };
+    format!(
+        "{task}\n\n\
+{missing_playwright}\
+Repo conventions:\n{context}\n\
+{setup_section}\
+Case:\n{rendered}\n\
+Work like this:\n\
+1. Explore first: drive a real browser with Playwright in headed mode through the case's \
+steps (for example with a short throwaway script) to confirm the flow and discover robust \
+selectors. Do not guess selectors from source code alone.\n\
+2. {write_step}\n\
+3. Verify visually: run the spec in a headed browser so the user can watch it \
+(`npx playwright test <path> --headed`; add `--project ...` if the config defines projects). \
+If it fails, fix the spec and re-run until it passes.\n\
+4. Link the spec to the case: set the case's front-matter `automation` to `state: linked` \
+with the spec path(s) in `specs`, and update `automation/links.yml` to match.\n\n\
+Requirements:\n{requirements}\n\n\
+End your reply with a short summary for the user: what the test covers, the outcome of the \
+final headed run (pass or fail, duration), and anything that needs human attention \
+(missing test ids, assumptions made, flaky selectors).",
+        context = context_lines(ctx),
+        rendered = render_case(case),
     )
 }
 
@@ -605,6 +736,52 @@ mod tests {
         assert!(p.contains("Open cart"));
         assert!(p.contains("http://localhost:3000"));
         assert!(p.contains("tests/checkout/cart.spec.ts"));
+    }
+
+    #[test]
+    fn assistant_prompt_explores_verifies_headed_links_and_summarizes() {
+        let case = sample_case();
+        let ctx = RepoContext {
+            config: None,
+            tests_dir: "tests".into(),
+            base_url: None,
+            nearby_specs: vec![],
+            target_path: spec_path_for(&case, "tests"),
+        };
+        for update in [false, true] {
+            let p = assistant_generation_prompt(&case, &ctx, update, "");
+            // Not confined like the headless runner.
+            assert!(!p.contains(HEADLESS_FOOTER));
+            // Explore in a real browser before writing.
+            assert!(p.contains("headed mode"));
+            // Verify with a headed run the user can watch.
+            assert!(p.contains("--headed"));
+            // Link the spec to the case afterwards.
+            assert!(p.contains("automation/links.yml"));
+            // Close with a user-facing summary.
+            assert!(p.contains("short summary for the user"));
+            // Case payload is still carried.
+            assert!(p.contains("Add item to cart"));
+            assert!(p.contains("Open cart"));
+        }
+        let generate = assistant_generation_prompt(&case, &ctx, false, "");
+        assert!(generate.contains("tests/checkout/add-item-to-cart.spec.ts"));
+        assert!(!generate.contains("setup notes"));
+        let update = assistant_generation_prompt(&case, &ctx, true, "");
+        assert!(update.contains("has drifted"));
+        let with_setup =
+            assistant_generation_prompt(&case, &ctx, false, "Start the app with `pnpm dev`.");
+        assert!(with_setup.contains("setup notes"));
+        assert!(with_setup.contains("Start the app with `pnpm dev`."));
+        // ctx has no config, so the agent is told to set Playwright up first;
+        // with a config present the note disappears.
+        assert!(generate.contains("no Playwright config was detected"));
+        let configured = RepoContext {
+            config: Some("playwright.config.ts".into()),
+            ..ctx
+        };
+        let p = assistant_generation_prompt(&case, &configured, false, "");
+        assert!(!p.contains("no Playwright config was detected"));
     }
 
     #[test]

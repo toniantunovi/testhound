@@ -57,7 +57,33 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
   );
 }
 
-export function AutomationBadge({ state }: { state: AutomationState }) {
+/** With `onClick` the badge becomes a link to the case's row in the
+ *  Automation & Coverage view. */
+export function AutomationBadge({
+  state,
+  onClick,
+}: {
+  state: AutomationState;
+  onClick?: () => void;
+}) {
+  const badge = automationBadge(state);
+  if (!onClick) return badge;
+  return (
+    <button
+      type="button"
+      title="Show in Automation & Coverage"
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="rounded-control transition-opacity hover:opacity-75"
+    >
+      {badge}
+    </button>
+  );
+}
+
+function automationBadge(state: AutomationState) {
   switch (state) {
     case "linked":
       return (

@@ -19,7 +19,6 @@ import { Automation } from "@/screens/Automation";
 import { Changes } from "@/screens/Changes";
 import { MergeView } from "@/screens/MergeView";
 import { Settings } from "@/screens/Settings";
-import { GenerationDrawer } from "@/screens/GenerationDrawer";
 import { Placeholder } from "@/screens/Placeholder";
 
 export function AppShell() {
@@ -73,7 +72,6 @@ export function AppShell() {
         <AssistantPanel />
       </div>
       <ActivityConsole />
-      <GenerationDrawer />
       <CommandPalette />
     </div>
   );

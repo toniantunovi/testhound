@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, FileCode2, Save, X } from "lucide-react";
+import { Check, ExternalLink, FileCode2, Save, X } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { Button } from "@/components/ui/Button";
+import { CodeEditor } from "@/components/ui/CodeEditor";
 
 /** View and hand-edit a linked spec's source. Saving writes straight to the
  *  working tree (like any editor would); the change is reviewed and committed
@@ -61,6 +62,15 @@ export function SpecEditorModal({
               {path}
             </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Open in your code editor"
+            onClick={() => api.openInEditor(path).catch((e) => window.alert(errMsg(e)))}
+          >
+            <ExternalLink size={13} />
+            Open in editor
+          </Button>
           <button
             onClick={requestClose}
             className="text-text-muted hover:text-text-primary"
@@ -75,15 +85,18 @@ export function SpecEditorModal({
           ) : text === null ? (
             <p className="text-xs text-text-muted">Loading spec…</p>
           ) : (
-            <textarea
-              value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                setDirty(true);
-              }}
-              spellCheck={false}
-              className="selectable h-[62vh] w-full flex-1 resize-none rounded-card border border-border-subtle bg-bg-base p-3 font-mono text-[12.5px] leading-relaxed text-text-primary focus:border-border-strong focus:outline-none"
-            />
+            <div className="h-[62vh] w-full flex-1 overflow-hidden rounded-card border border-border-subtle bg-bg-base focus-within:border-border-strong">
+              <CodeEditor
+                value={text}
+                onChange={(next) => {
+                  setText(next);
+                  setDirty(true);
+                }}
+                onSave={() => {
+                  if (dirty && !save.isPending) save.mutate(text);
+                }}
+              />
+            </div>
           )}
         </div>
 

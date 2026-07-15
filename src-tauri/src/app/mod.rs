@@ -727,6 +727,39 @@ pub fn open_url(url: String) -> Result<()> {
     Ok(())
 }
 
+/// Open a repo-relative file in the user's code editor: the first known GUI
+/// editor CLI on PATH, falling back to the platform's default application.
+#[tauri::command]
+pub fn open_in_editor(path: String, state: tauri::State<AppState>) -> Result<()> {
+    let paths = state.paths()?;
+    let file = resolve_repo_file(&paths, &path)?;
+    if !file.is_file() {
+        return Err(Error::Other(format!("file not found on disk: {path}")));
+    }
+    for editor in ["code", "cursor", "windsurf", "zed", "subl"] {
+        if agent::on_path(editor) {
+            std::process::Command::new(editor)
+                .arg(&file)
+                .spawn()
+                .map_err(|e| Error::Other(format!("failed to launch {editor}: {e}")))?;
+            return Ok(());
+        }
+    }
+    #[cfg(target_os = "macos")]
+    let status = std::process::Command::new("open").arg(&file).spawn();
+    #[cfg(target_os = "linux")]
+    let status = std::process::Command::new("xdg-open").arg(&file).spawn();
+    #[cfg(target_os = "windows")]
+    let status = std::process::Command::new("cmd")
+        .arg("/C")
+        .arg("start")
+        .arg("")
+        .arg(&file)
+        .spawn();
+    status.map_err(|e| Error::Other(format!("failed to open file: {e}")))?;
+    Ok(())
+}
+
 // ---- AI automation (docs/05-ai-automation.md, roadmap M4) ---------------------
 
 /// Which coding agents (Claude Code / Codex) are installed on PATH.
@@ -748,6 +781,39 @@ pub async fn automation_context(id: String, state: tauri::State<'_, AppState>) -
     let paths = state.paths()?;
     let case = repo::load_case(&paths, &id)?;
     Ok(automation::detect_context(&paths, &case))
+}
+
+/// The generate/update prompt for a case, phrased for the assistant panel.
+/// The UI prefills the composer with it; the user reviews and sends.
+#[tauri::command]
+pub async fn generation_prompt(
+    id: String,
+    update: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<String> {
+    let paths = state.paths()?;
+    let case = repo::load_case(&paths, &id)?;
+    let ctx = automation::detect_context(&paths, &case);
+    let setup = automation::load_setup(&paths);
+    Ok(automation::assistant_generation_prompt(
+        &case, &ctx, update, &setup,
+    ))
+}
+
+/// The committed automation setup notes (`automation/setup.md`), or "" if none.
+#[tauri::command]
+pub async fn automation_setup(state: tauri::State<'_, AppState>) -> Result<String> {
+    Ok(automation::load_setup(&state.paths()?))
+}
+
+/// Save the automation setup notes. Lands in the working tree like any other
+/// TestHound-owned file; an empty document removes the file.
+#[tauri::command]
+pub async fn save_automation_setup(
+    content: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    automation::save_setup(&state.paths()?, &content)
 }
 
 /// A file's working-tree contents alongside its committed version, for the
@@ -900,6 +966,9 @@ pub async fn assistant_send(
         .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
     let turn = assistant::build_turn(kind, &paths, &history, &message, session_id.is_some());
     let child_slot = state.assistant_child.clone();
+    // Export the configured test target so Playwright runs the agent launches
+    // point at the right app with the right credentials.
+    let env = playwright::target_env(&playwright::load_target(&paths));
 
     std::thread::spawn(move || {
         let emit_app = app.clone();
@@ -910,6 +979,7 @@ pub async fn assistant_send(
             &turn.prompt,
             session_id.as_deref(),
             turn.system.as_deref(),
+            &env,
             child_slot,
             |ev| {
                 let (kind, text) = match ev {
@@ -995,11 +1065,12 @@ pub fn generate_spec(
 
     // Snapshot the specs on disk so we can report what the agent touched.
     let before = automation::snapshot_specs(&paths);
+    let env = playwright::target_env(&playwright::load_target(&paths));
 
     std::thread::spawn(move || {
         let log_app = app.clone();
         let log_id = case_id.clone();
-        let result = agent::run(&paths.root, kind, Mode::Edit, &prompt, |line| {
+        let result = agent::run(&paths.root, kind, Mode::Edit, &prompt, &env, |line| {
             let _ = log_app.emit(
                 "agent://log",
                 AgentLogEvent {
@@ -1068,10 +1139,11 @@ pub fn triage_failure(
         },
     );
 
+    let env = playwright::target_env(&playwright::load_target(&paths));
     std::thread::spawn(move || {
         let log_app = app.clone();
         let log_id = id.clone();
-        let result = agent::run(&paths.root, kind, Mode::ReadOnly, &prompt, |line| {
+        let result = agent::run(&paths.root, kind, Mode::ReadOnly, &prompt, &env, |line| {
             let _ = log_app.emit(
                 "agent://log",
                 AgentLogEvent {

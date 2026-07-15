@@ -76,7 +76,7 @@ pub fn detect_agents() -> Vec<AgentAvailability> {
 
 /// Is `program` an executable somewhere on `PATH`? A pure filesystem lookup so
 /// probing an agent never spawns it.
-fn on_path(program: &str) -> bool {
+pub(crate) fn on_path(program: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
@@ -158,11 +158,15 @@ pub fn build_args(kind: AgentKind, mode: Mode, prompt: &str) -> Vec<String> {
 /// output through `on_line`. Returns the concatenated stdout (used as the
 /// suggestion text for read-only triage runs). Errors if the CLI is missing or
 /// exits non-zero.
+///
+/// `env` is exported to the agent process so Playwright runs it launches see
+/// the configured test target (BASE_URL, credentials, ...).
 pub fn run<F: FnMut(&str)>(
     workdir: &Path,
     kind: AgentKind,
     mode: Mode,
     prompt: &str,
+    env: &[(String, String)],
     mut on_line: F,
 ) -> Result<String> {
     if !on_path(kind.command()) {
@@ -179,6 +183,7 @@ pub fn run<F: FnMut(&str)>(
         .args(&args)
         .current_dir(workdir)
         .env("FORCE_COLOR", "0")
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -396,6 +401,7 @@ pub fn run_chat<F: FnMut(ChatEvent)>(
     prompt: &str,
     resume: Option<&str>,
     system: Option<&str>,
+    env: &[(String, String)],
     child_slot: Arc<Mutex<Option<Child>>>,
     mut on_event: F,
 ) -> Result<ChatOutcome> {
@@ -413,6 +419,7 @@ pub fn run_chat<F: FnMut(ChatEvent)>(
         .args(&args)
         .current_dir(workdir)
         .env("FORCE_COLOR", "0")
+        .envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

@@ -25,6 +25,8 @@ interface SessionState {
   openCaseId: string | null;
   /** Run currently open in the execution view. */
   openRunId: string | null;
+  /** Case whose row the Automation view should scroll to and highlight. */
+  automationFocus: string | null;
   activityOpen: boolean;
   /** Command palette (⌘K) overlay. */
   paletteOpen: boolean;
@@ -35,6 +37,8 @@ interface SessionState {
   openCase: (id: string) => void;
   openCaseHistory: (id: string) => void;
   openRun: (id: string) => void;
+  openAutomation: (caseId: string) => void;
+  clearAutomationFocus: () => void;
   newRun: () => void;
   toggleActivity: () => void;
   setActivity: (open: boolean) => void;
@@ -49,6 +53,7 @@ export const useSession = create<SessionState>((set) => ({
   selectedSection: null,
   openCaseId: null,
   openRunId: null,
+  automationFocus: null,
   activityOpen: false,
   paletteOpen: false,
 
@@ -59,6 +64,9 @@ export const useSession = create<SessionState>((set) => ({
   openCase: (openCaseId) => set({ openCaseId, view: "case-editor" }),
   openCaseHistory: (openCaseId) => set({ openCaseId, view: "case-history" }),
   openRun: (openRunId) => set({ openRunId, view: "run-view" }),
+  openAutomation: (automationFocus) =>
+    set({ automationFocus, view: "automation" }),
+  clearAutomationFocus: () => set({ automationFocus: null }),
   newRun: () => set({ view: "new-run" }),
   toggleActivity: () => set((s) => ({ activityOpen: !s.activityOpen })),
   setActivity: (activityOpen) => set({ activityOpen }),

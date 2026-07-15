@@ -581,6 +581,7 @@ function CaseTable({
   onMove: (c: CaseSummary, suite: string) => void;
   onDelete: (c: CaseSummary) => void;
 }) {
+  const openAutomation = useSession((s) => s.openAutomation);
   return (
     <table className="w-full border-collapse text-sm">
       <thead className="sticky top-0 z-10 bg-bg-base">
@@ -621,7 +622,10 @@ function CaseTable({
             </td>
             <td className="py-2 text-text-secondary">{c.type}</td>
             <td className="py-2">
-              <AutomationBadge state={c.automationState} />
+              <AutomationBadge
+                state={c.automationState}
+                onClick={() => openAutomation(c.id)}
+              />
             </td>
             <td className="py-2">
               <span
@@ -769,6 +773,7 @@ function CasePreview({
     queryKey: ["case", id],
     queryFn: () => api.getCase(id),
   });
+  const openAutomation = useSession((s) => s.openAutomation);
 
   return (
     <aside className="flex w-96 shrink-0 flex-col border-l border-border-subtle bg-bg-surface/50">
@@ -796,7 +801,10 @@ function CasePreview({
           <h2 className="text-base font-semibold text-text-primary">{c.title}</h2>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <PriorityBadge priority={c.priority} />
-            <AutomationBadge state={c.automation.state} />
+            <AutomationBadge
+              state={c.automation.state}
+              onClick={() => openAutomation(c.id)}
+            />
             <span className="text-xs capitalize text-text-secondary">{c.type}</span>
             <span className="text-xs capitalize text-text-muted">{c.status}</span>
           </div>
