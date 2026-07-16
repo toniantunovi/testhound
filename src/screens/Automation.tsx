@@ -33,7 +33,7 @@ export function Automation() {
   const [tab, setTab] = useState<Tab>("all");
   // Repo-relative path of the spec being viewed/edited, if the modal is open.
   const [openSpecPath, setOpenSpecPath] = useState<string | null>(null);
-  const prefillAssistant = useAssistant((s) => s.prefill);
+  const startGeneration = useAssistant((s) => s.startGeneration);
   const openCase = useSession((s) => s.openCase);
   const focusCase = useSession((s) => s.automationFocus);
   const clearFocus = useSession((s) => s.clearAutomationFocus);
@@ -65,7 +65,7 @@ export function Automation() {
   const generate = (row: CoverageRow, update: boolean) =>
     api
       .generationPrompt(row.case, update)
-      .then(prefillAssistant)
+      .then((p) => startGeneration(row.case, update, p))
       .catch((e) => window.alert(errMsg(e)));
 
   return (

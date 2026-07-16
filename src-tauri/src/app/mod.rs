@@ -896,6 +896,44 @@ pub fn accept_generation(
     automation::accept_generation(&state.paths()?, &case_id, specs, &generator)
 }
 
+/// Link the spec an assistant-driven generation/update just produced, in code,
+/// so the manual case's front matter is never hand-edited by the agent (a
+/// malformed edit used to make the case vanish from every list). Called after
+/// each assistant turn while a generation is pending. Returns the updated case
+/// once the expected spec is on disk, or `None` if it isn't there yet (the
+/// agent may still be exploring or fixing a failing run).
+#[tauri::command]
+pub async fn link_generated_specs(
+    id: String,
+    update: bool,
+    generator: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<TestCase>> {
+    let paths = state.paths()?;
+    let case = repo::load_case(&paths, &id)?;
+    // The case is already linked and its spec still exists: nothing to do.
+    if update && !case.front.automation.specs.is_empty() {
+        let specs: Vec<String> = case.front.automation.specs.clone();
+        let existing: Vec<String> = specs
+            .into_iter()
+            .filter(|s| paths.root.join(playwright::parse_spec_ref(s).file).is_file())
+            .collect();
+        if existing.is_empty() {
+            return Ok(None);
+        }
+        return automation::accept_generation(&paths, &id, existing, &generator).map(Some);
+    }
+
+    // Fresh generation: link the spec at the conventional target path the prompt
+    // asked the agent to write, once it exists.
+    let ctx = automation::detect_context(&paths, &case);
+    let target = playwright::parse_spec_ref(&ctx.target_path).file;
+    if !paths.root.join(&target).is_file() {
+        return Ok(None);
+    }
+    automation::accept_generation(&paths, &id, vec![ctx.target_path], &generator).map(Some)
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentStartedEvent {

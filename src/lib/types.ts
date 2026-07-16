@@ -70,6 +70,8 @@ export interface CaseSummary {
   automationState: AutomationState;
   updated: string | null;
   path: string;
+  /** The file exists but its front matter could not be parsed. */
+  broken?: boolean;
 }
 
 export interface Step {

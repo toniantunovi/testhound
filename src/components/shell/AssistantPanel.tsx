@@ -94,6 +94,32 @@ export function AssistantPanel() {
         finishTurn(e.turnId, e.reply, e.sessionId, e.error);
         // The agent may have written files; refresh the data-backed views.
         REFRESH_KEYS.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+        // If this turn was a spec generation, link it in code once the spec is
+        // on disk. The agent no longer edits the case front matter itself (a
+        // malformed hand-edit used to make the case vanish); TestHound records
+        // the link atomically instead. If the spec is not there yet (the agent
+        // is still iterating), the pending marker stays for a later turn.
+        const { pendingGeneration, agentId: generator, clearGeneration } =
+          useAssistant.getState();
+        if (!e.error && pendingGeneration) {
+          api
+            .linkGeneratedSpecs(
+              pendingGeneration.caseId,
+              pendingGeneration.update,
+              generator,
+            )
+            .then((linked) => {
+              if (linked) {
+                clearGeneration();
+                REFRESH_KEYS.forEach((k) =>
+                  qc.invalidateQueries({ queryKey: [k] }),
+                );
+              }
+            })
+            .catch(() => {
+              /* spec not linkable yet; keep the pending marker for next turn */
+            });
+        }
       }),
     ];
     return () => {

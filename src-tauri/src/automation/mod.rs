@@ -310,8 +310,8 @@ selectors. Do not guess selectors from source code alone.\n\
 3. Verify visually: run the spec in a headed browser so the user can watch it \
 (`npx playwright test <path> --headed`; add `--project ...` if the config defines projects). \
 If it fails, fix the spec and re-run until it passes.\n\
-4. Link the spec to the case: set the case's front-matter `automation` to `state: linked` \
-with the spec path(s) in `specs`, and update `automation/links.yml` to match.\n\n\
+4. Do not edit the manual test case file or `automation/links.yml` yourself: TestHound \
+records the link automatically once you finish. Just leave the working spec at its path.\n\n\
 Requirements:\n{requirements}\n\n\
 End your reply with a short summary for the user: what the test covers, the outcome of the \
 final headed run (pass or fail, duration), and anything that needs human attention \
@@ -756,8 +756,9 @@ mod tests {
             assert!(p.contains("headed mode"));
             // Verify with a headed run the user can watch.
             assert!(p.contains("--headed"));
-            // Link the spec to the case afterwards.
-            assert!(p.contains("automation/links.yml"));
+            // The agent must NOT hand-edit the case or links index; TestHound
+            // links it automatically once the spec is written.
+            assert!(p.contains("Do not edit the manual test case file"));
             // Close with a user-facing summary.
             assert!(p.contains("short summary for the user"));
             // Case payload is still carried.

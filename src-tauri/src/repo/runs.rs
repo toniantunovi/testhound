@@ -604,6 +604,7 @@ mod tests {
             automation_state: AutomationState::None,
             updated: None,
             path: format!("suites/{suite}/cases/{id}.md"),
+            broken: false,
         }
     }
 

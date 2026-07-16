@@ -44,7 +44,7 @@ export function CaseEditor() {
   const navigate = useSession((s) => s.navigate);
   const openCaseHistory = useSession((s) => s.openCaseHistory);
   const openAutomation = useSession((s) => s.openAutomation);
-  const prefillAssistant = useAssistant((s) => s.prefill);
+  const startGeneration = useAssistant((s) => s.startGeneration);
   const qc = useQueryClient();
 
   const { data: loaded } = useQuery({
@@ -330,15 +330,13 @@ export function CaseEditor() {
                 draft.automation.state === "drifted" &&
                   "border-status-drifted/40 text-status-drifted",
               )}
-              onClick={() =>
+              onClick={() => {
+                const update = draft.automation.state === "drifted";
                 api
-                  .generationPrompt(
-                    draft.id,
-                    draft.automation.state === "drifted",
-                  )
-                  .then(prefillAssistant)
-                  .catch((e) => window.alert(errMsg(e)))
-              }
+                  .generationPrompt(draft.id, update)
+                  .then((p) => startGeneration(draft.id, update, p))
+                  .catch((e) => window.alert(errMsg(e)));
+              }}
             >
               <Sparkles size={13} className="text-brand-accent" />
               {draft.automation.state === "none"

@@ -186,6 +186,12 @@ export const api = {
     invoke<void>("generate_spec", { caseId, agentId, update }),
   acceptGeneration: (caseId: string, specs: string[], generator: string) =>
     invoke<TestCase>("accept_generation", { caseId, specs, generator }),
+  linkGeneratedSpecs: (caseId: string, update: boolean, generator: string) =>
+    invoke<TestCase | null>("link_generated_specs", {
+      id: caseId,
+      update,
+      generator,
+    }),
   triageFailure: (runId: string, caseId: string, agentId: string) =>
     invoke<void>("triage_failure", { runId, caseId, agentId }),
 

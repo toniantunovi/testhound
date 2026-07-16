@@ -111,6 +111,7 @@ pub fn run() {
             app::read_spec,
             app::write_spec,
             app::accept_generation,
+            app::link_generated_specs,
             app::generate_spec,
             app::triage_failure,
             app::assistant_send,

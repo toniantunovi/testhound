@@ -95,3 +95,54 @@ fn scaffold_seed_and_roundtrip() {
     // Clean up.
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// A case whose front matter is corrupted (e.g. by a hand-edit from an agent)
+/// must never silently disappear: it surfaces as a `broken` row with a salvaged
+/// id and suite so the user can find and fix it.
+#[test]
+fn malformed_front_matter_surfaces_as_broken_row() {
+    let root = tmp_repo();
+    let th = "testhound";
+    repo::scaffold(&root, "Acme Shop", th).unwrap();
+    let paths = Paths::new(&root, th);
+    sample::seed(&paths).unwrap();
+
+    let before = repo::list_cases(&paths).unwrap();
+    assert_eq!(before.len(), 10);
+
+    // Corrupt TC-0007's front matter the way a bad automation edit would:
+    // break the nested `automation` block's YAML while keeping the `---` fences.
+    let path = root
+        .join("testhound/suites/checkout/cases")
+        .read_dir()
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("TC-0007-"))
+                .unwrap_or(false)
+        })
+        .expect("TC-0007 file");
+    // `automation` written as a scalar instead of the expected block: valid
+    // YAML, but the typed front matter rejects it (a common bad hand-edit).
+    std::fs::write(
+        &path,
+        "---\nid: TC-0007\ntitle: Add item to cart\nsuite: checkout\npriority: high\nautomation: linked\n---\n\n## Steps\n1. Open cart\n",
+    )
+    .unwrap();
+
+    let after = repo::list_cases(&paths).unwrap();
+    // Still ten rows: the corrupt case did not vanish.
+    assert_eq!(after.len(), 10);
+    let tc7 = after.iter().find(|c| c.id == "TC-0007").unwrap();
+    assert!(tc7.broken, "corrupt case should be flagged broken");
+    // Salvaged fields let the user locate the file for repair.
+    assert_eq!(tc7.suite, "checkout");
+    assert_eq!(tc7.automation_state, AutomationState::None);
+    // Every healthy case is still parsed normally.
+    assert!(after.iter().filter(|c| !c.broken).count() == 9);
+
+    std::fs::remove_dir_all(&root).ok();
+}

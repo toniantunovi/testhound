@@ -23,6 +23,9 @@ interface AssistantState {
   currentTurnId: string | null;
   /** Text waiting to be placed into the composer; the user confirms and sends. */
   draft: string | null;
+  /** A spec generation/update awaiting its spec, so the panel can link it in
+   *  code once the agent finishes (the agent never edits the case itself). */
+  pendingGeneration: { caseId: string; update: boolean } | null;
 
   toggle: () => void;
   setOpen: (open: boolean) => void;
@@ -32,6 +35,10 @@ interface AssistantState {
   /** Open the panel with `text` staged in the composer, awaiting user send. */
   prefill: (text: string) => void;
   clearDraft: () => void;
+  /** Stage a generation prompt and remember which case it targets, so the panel
+   *  can link the resulting spec once the turn completes. */
+  startGeneration: (caseId: string, update: boolean, prompt: string) => void;
+  clearGeneration: () => void;
 
   beginTurn: (turnId: string, userText: string) => void;
   appendText: (turnId: string, text: string) => void;
@@ -52,14 +59,24 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   busy: false,
   currentTurnId: null,
   draft: null,
+  pendingGeneration: null,
 
   toggle: () => set((s) => ({ open: !s.open })),
   setOpen: (open) => set({ open }),
   setAgent: (agentId) => set({ agentId }),
   reset: () =>
-    set({ messages: [], sessionId: null, busy: false, currentTurnId: null }),
+    set({
+      messages: [],
+      sessionId: null,
+      busy: false,
+      currentTurnId: null,
+      pendingGeneration: null,
+    }),
   prefill: (draft) => set({ draft, open: true }),
   clearDraft: () => set({ draft: null }),
+  startGeneration: (caseId, update, prompt) =>
+    set({ pendingGeneration: { caseId, update }, draft: prompt, open: true }),
+  clearGeneration: () => set({ pendingGeneration: null }),
 
   beginTurn: (turnId, userText) =>
     set((s) => ({

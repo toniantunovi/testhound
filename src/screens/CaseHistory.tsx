@@ -14,7 +14,7 @@ import { cn, initials, relativeTime } from "@/lib/utils";
 export function CaseHistory() {
   const id = useSession((s) => s.openCaseId);
   const openCase = useSession((s) => s.openCase);
-  const prefillAssistant = useAssistant((s) => s.prefill);
+  const startGeneration = useAssistant((s) => s.startGeneration);
   const push = useActivity((s) => s.push);
   const qc = useQueryClient();
 
@@ -181,7 +181,7 @@ export function CaseHistory() {
                     id &&
                     api
                       .generationPrompt(id, true)
-                      .then(prefillAssistant)
+                      .then((p) => startGeneration(id, true, p))
                       .catch((e) => window.alert(errMsg(e)))
                   }
                 >

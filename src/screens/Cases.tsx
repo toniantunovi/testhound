@@ -14,6 +14,7 @@ import {
   Search,
   SquarePen,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
@@ -616,7 +617,19 @@ function CaseTable({
               <input type="checkbox" className="accent-brand-primary" />
             </td>
             <td className="py-2 font-mono text-xs text-brand-primary">{c.id}</td>
-            <td className="py-2 pr-4 text-text-primary">{c.title}</td>
+            <td className="py-2 pr-4 text-text-primary">
+              {c.broken ? (
+                <span
+                  className="inline-flex items-center gap-1.5 text-status-failed"
+                  title={`Front matter could not be parsed: ${c.path}. Open the file and fix the YAML.`}
+                >
+                  <TriangleAlert size={13} className="shrink-0" />
+                  {c.title}
+                </span>
+              ) : (
+                c.title
+              )}
+            </td>
             <td className="py-2">
               <PriorityBadge priority={c.priority} />
             </td>

@@ -64,6 +64,11 @@ pub struct CaseSummary {
     pub updated: Option<String>,
     /// Repo-relative path to the file, for Git operations and display.
     pub path: String,
+    /// The file exists but its front matter could not be parsed. Such a case is
+    /// surfaced as a diagnostic row (with best-effort salvaged fields) rather
+    /// than dropped, so a malformed edit can never make a case silently vanish.
+    #[serde(default)]
+    pub broken: bool,
 }
 
 /// A suite with its sections and case count, for the tree in the list view.
@@ -224,17 +229,25 @@ pub fn list_cases(paths: &Paths) -> Result<Vec<CaseSummary>> {
             continue;
         }
         let content = fs::read_to_string(p)?;
-        let (fm, _body) = case_file::split_front_matter(&content);
-        let Some(fm) = fm else { continue };
-        let front: FrontMatter = match serde_yaml::from_str(fm) {
-            Ok(f) => f,
-            Err(_) => continue, // skip malformed files rather than failing the whole list
-        };
         let rel = p
             .strip_prefix(&paths.root)
             .unwrap_or(p)
             .to_string_lossy()
             .replace('\\', "/");
+        let (fm, _body) = case_file::split_front_matter(&content);
+        // No front matter, or front matter that won't parse: surface a broken
+        // row instead of dropping the case, so a bad edit can't make it vanish.
+        let Some(fm) = fm else {
+            out.push(broken_summary("", p, rel));
+            continue;
+        };
+        let front: FrontMatter = match serde_yaml::from_str(fm) {
+            Ok(f) => f,
+            Err(_) => {
+                out.push(broken_summary(fm, p, rel));
+                continue;
+            }
+        };
         out.push(CaseSummary {
             id: front.id,
             title: front.title,
@@ -248,10 +261,62 @@ pub fn list_cases(paths: &Paths) -> Result<Vec<CaseSummary>> {
             automation_state: front.automation.state,
             updated: front.updated,
             path: rel,
+            broken: false,
         });
     }
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
+}
+
+/// Build a diagnostic summary for a case file whose front matter is missing or
+/// unparseable. Salvages what it can: the id/title/suite from a permissive YAML
+/// read where possible, and the suite from the file's own path (which encodes
+/// it as `suites/<suite>/cases/…`). Marked `broken` so the UI can flag it for
+/// repair rather than the case disappearing from every list.
+fn broken_summary(fm: &str, path: &Path, rel: String) -> CaseSummary {
+    let val: serde_yaml::Value =
+        serde_yaml::from_str(fm).unwrap_or(serde_yaml::Value::Null);
+    let get = |k: &str| {
+        val.get(k)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .filter(|s| !s.is_empty())
+    };
+
+    // Suite is reliably recoverable from the path: `…/suites/<suite>/cases/…`.
+    let suite = get("suite").or_else(|| {
+        let parts: Vec<String> = path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        parts
+            .iter()
+            .position(|c| c == "suites")
+            .and_then(|i| parts.get(i + 1).cloned())
+    });
+
+    let id = get("id").unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_string()
+    });
+
+    CaseSummary {
+        id,
+        title: get("title").unwrap_or_else(|| "Unparseable front matter".to_string()),
+        suite: suite.unwrap_or_default(),
+        section: None,
+        priority: Priority::default(),
+        kind: CaseType::default(),
+        status: CaseStatus::default(),
+        owner: None,
+        tags: vec![],
+        automation_state: AutomationState::None,
+        updated: None,
+        path: rel,
+        broken: true,
+    }
 }
 
 fn case_path(paths: &Paths, id: &str) -> Result<PathBuf> {
