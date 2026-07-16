@@ -1,6 +1,6 @@
 [package]
 name = "testhound"
-version = "0.7.2"
+version = "0.7.3"
 description = "A Git-native, AI-powered test management desktop app"
 authors = ["TestHound"]
 edition = "2021"
