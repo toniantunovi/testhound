@@ -86,6 +86,43 @@ fn peer_pushes(peer: &Path, title: &str) {
     sh(peer, &["push"]);
 }
 
+/// A branch created in-app has no upstream. Push must publish it and set the
+/// upstream so it works even without the user's `push.autoSetupRemote` config.
+#[test]
+fn push_publishes_a_new_branch_without_autosetup() {
+    let (ours, _peer) = setup();
+    // Simulate the default git config where a bare push has no upstream fallback.
+    sh(&ours, &["config", "push.autoSetupRemote", "false"]);
+
+    let repo = git::open(&ours).unwrap();
+    git::create_branch(&repo, "feature/new-cases").unwrap();
+    drop(repo);
+
+    // First push of the new branch: it has no upstream yet.
+    git::push(&ours).unwrap();
+
+    // The branch now tracks the remote and is in sync.
+    let repo = git::open(&ours).unwrap();
+    let branch = repo
+        .find_branch("feature/new-cases", git2::BranchType::Local)
+        .unwrap();
+    assert!(
+        branch.upstream().is_ok(),
+        "upstream should be set after the first push"
+    );
+    let status = git::status(&repo).unwrap();
+    assert_eq!(status.branch, "feature/new-cases");
+    assert_eq!((status.ahead, status.behind), (0, 0));
+
+    // A subsequent push (now with an upstream) still succeeds.
+    write_case(&ours, &case_file("Add to cart (on branch)"));
+    sh(&ours, &["add", "."]);
+    sh(&ours, &["commit", "-m", "branch edit"]);
+    git::push(&ours).unwrap();
+    let repo = git::open(&ours).unwrap();
+    assert_eq!(git::status(&repo).unwrap().ahead, 0, "second push landed");
+}
+
 #[test]
 fn sync_fast_forwards_when_behind() {
     let (ours, peer) = setup();

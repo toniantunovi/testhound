@@ -390,11 +390,55 @@ pub fn commit_paths(root: &Path, message: &str, files: &[String]) -> Result<()> 
     Ok(())
 }
 
-/// Push the current branch to its upstream.
+/// Does the current branch have an upstream tracking ref configured?
+fn has_upstream(root: &Path) -> bool {
+    let Ok(repo) = open(root) else {
+        return false;
+    };
+    let Some(name) = repo
+        .head()
+        .ok()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().map(str::to_string))
+    else {
+        return false;
+    };
+    let has = repo
+        .find_branch(&name, git2::BranchType::Local)
+        .and_then(|b| b.upstream())
+        .is_ok();
+    has
+}
+
+/// The remote to publish a new branch to: `origin` when it exists, else the sole
+/// remote if there is exactly one, else `origin` as a last resort.
+fn default_remote(root: &Path) -> String {
+    open(root)
+        .ok()
+        .and_then(|repo| {
+            let remotes = repo.remotes().ok()?;
+            if remotes.iter().flatten().any(|r| r == "origin") {
+                return Some("origin".to_string());
+            }
+            if remotes.len() == 1 {
+                return remotes.get(0).map(str::to_string);
+            }
+            None
+        })
+        .unwrap_or_else(|| "origin".to_string())
+}
+
+/// Push the current branch. A branch created in-app has no upstream yet, and a
+/// bare `git push` then fails unless the user set `push.autoSetupRemote`. To
+/// push reliably regardless of git config, publish a branch with no upstream via
+/// `--set-upstream <remote> HEAD`; established branches use a plain `git push`.
 pub fn push(root: &Path) -> Result<String> {
-    let out = Command::new("git")
-        .current_dir(root)
-        .arg("push")
+    let mut cmd = Command::new("git");
+    cmd.current_dir(root).arg("push");
+    if !has_upstream(root) {
+        cmd.arg("--set-upstream").arg(default_remote(root)).arg("HEAD");
+    }
+    let out = cmd
         .output()
         .map_err(|e| Error::Other(format!("failed to spawn git: {e}")))?;
     // `git push` writes its progress to stderr even on success.
