@@ -290,6 +290,36 @@ pub async fn delete_suite(id: String, state: tauri::State<'_, AppState>) -> Resu
     Ok(())
 }
 
+/// Rename a section's display name within a suite. The id (and thus the case
+/// front-matter references) stays stable. The change lands in the working tree
+/// for review.
+#[tauri::command]
+pub async fn rename_section(
+    suite: String,
+    id: String,
+    name: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Other("section name is empty".into()));
+    }
+    repo::rename_section(&paths, &suite, &id, name)
+}
+
+/// Delete a section within a suite. The cases stay; their `section:` reference
+/// is cleared. The change lands in the working tree for review.
+#[tauri::command]
+pub async fn delete_section(
+    suite: String,
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    let paths = state.paths()?;
+    repo::delete_section(&paths, &suite, &id)
+}
+
 /// Move a case into another suite (front matter + file location).
 #[tauri::command]
 pub async fn move_case(

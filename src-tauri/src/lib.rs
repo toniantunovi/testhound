@@ -72,6 +72,8 @@ pub fn run() {
             app::create_suite,
             app::rename_suite,
             app::delete_suite,
+            app::rename_section,
+            app::delete_section,
             app::list_suites,
             app::list_cases,
             app::get_case,

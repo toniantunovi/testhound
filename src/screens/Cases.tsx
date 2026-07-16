@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
-import type { CaseSummary, Priority, SuiteTree } from "@/lib/types";
+import type { CaseSummary, Priority, Section, SuiteTree } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
@@ -121,6 +121,27 @@ export function Cases() {
     onError: (e) => window.alert(errMsg(e)),
   });
 
+  const renameSection = useMutation({
+    mutationFn: ({ suite, id, name }: { suite: string; id: string; name: string }) =>
+      api.renameSection(suite, id, name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["suites"] });
+      qc.invalidateQueries({ queryKey: ["git-status"] });
+    },
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  const deleteSection = useMutation({
+    mutationFn: ({ suite, id }: { suite: string; id: string }) =>
+      api.deleteSection(suite, id),
+    onSuccess: (_data, { suite, id }) => {
+      if (selectedSuite === suite && selectedSection === id)
+        selectSuite(suite, null);
+      invalidateCases();
+    },
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
   const confirmDeleteSuite = async (s: SuiteTree) => {
     const ok = await ask(
       `Delete suite "${s.name}" and its ${s.caseCount} case${
@@ -129,6 +150,14 @@ export function Cases() {
       { title: "Delete suite", kind: "warning" },
     );
     if (ok) deleteSuite.mutate(s.id);
+  };
+
+  const confirmDeleteSection = async (suite: string, section: Section) => {
+    const ok = await ask(
+      `Delete folder "${section.name}"?\n\nIts cases stay in the suite but lose their folder assignment. Review and commit the change in the Changes panel.`,
+      { title: "Delete folder", kind: "warning" },
+    );
+    if (ok) deleteSection.mutate({ suite, id: section.id });
   };
 
   const confirmDeleteCase = async (c: CaseSummary) => {
@@ -182,6 +211,9 @@ export function Cases() {
         onCreateSuite={(name) => createSuite.mutate(name)}
         onRenameSuite={(id, name) => renameSuite.mutate({ id, name })}
         onDeleteSuite={confirmDeleteSuite}
+        onRenameSection={(suite, id, name) =>
+          renameSection.mutate({ suite, id, name })}
+        onDeleteSection={confirmDeleteSection}
         creating={createSuite.isPending}
       />
 
@@ -311,6 +343,8 @@ function SuiteTreeNav({
   onCreateSuite,
   onRenameSuite,
   onDeleteSuite,
+  onRenameSection,
+  onDeleteSection,
   creating,
 }: {
   suites: SuiteTree[];
@@ -321,10 +355,35 @@ function SuiteTreeNav({
   onCreateSuite: (name: string) => void;
   onRenameSuite: (id: string, name: string) => void;
   onDeleteSuite: (s: SuiteTree) => void;
+  onRenameSection: (suite: string, id: string, name: string) => void;
+  onDeleteSection: (suite: string, section: Section) => void;
   creating: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  /** Section being renamed inline, keyed `${suiteId}::${sectionId}`. */
+  const [renamingSection, setRenamingSection] = useState<string | null>(null);
+  /** Suite ids whose sections are expanded in the tree. */
+  const [expanded, setExpanded] = useState<Set<string>>(() =>
+    new Set(selectedSuite !== "all" ? [selectedSuite] : []),
+  );
+
+  // Keep the selected suite expanded so its folders (and the active filter
+  // context) stay visible when selection changes from elsewhere.
+  useEffect(() => {
+    if (selectedSuite === "all") return;
+    setExpanded((prev) =>
+      prev.has(selectedSuite) ? prev : new Set(prev).add(selectedSuite),
+    );
+  }, [selectedSuite]);
+
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-bg-surface/50">
@@ -366,25 +425,53 @@ function SuiteTreeNav({
                 count={s.caseCount}
                 active={selectedSuite === s.id && !selectedSection}
                 hasChildren={s.sections.length > 0}
-                onClick={() => onSelect(s.id, null)}
+                expanded={expanded.has(s.id)}
+                onToggle={() => toggle(s.id)}
+                onClick={() => {
+                  onSelect(s.id, null);
+                  if (s.sections.length > 0) setExpanded((p) => new Set(p).add(s.id));
+                }}
                 menu={
-                  <SuiteMenu
+                  <RowMenu
+                    title="Suite actions"
                     onRename={() => setRenamingId(s.id)}
                     onDelete={() => onDeleteSuite(s)}
                   />
                 }
               />
             )}
-            {selectedSuite === s.id &&
-              s.sections.map((sec) => (
-                <TreeRow
-                  key={sec.id}
-                  label={sec.name}
-                  indent
-                  active={selectedSection === sec.id}
-                  onClick={() => onSelect(s.id, sec.id)}
-                />
-              ))}
+            {expanded.has(s.id) &&
+              s.sections.map((sec) =>
+                renamingSection === `${s.id}::${sec.id}` ? (
+                  <div key={sec.id} className="pl-5">
+                    <InlineNameInput
+                      initial={sec.name}
+                      placeholder="Folder name"
+                      onSubmit={(name) => {
+                        setRenamingSection(null);
+                        if (name && name !== sec.name)
+                          onRenameSection(s.id, sec.id, name);
+                      }}
+                      onCancel={() => setRenamingSection(null)}
+                    />
+                  </div>
+                ) : (
+                  <TreeRow
+                    key={sec.id}
+                    label={sec.name}
+                    indent
+                    active={selectedSuite === s.id && selectedSection === sec.id}
+                    onClick={() => onSelect(s.id, sec.id)}
+                    menu={
+                      <RowMenu
+                        title="Folder actions"
+                        onRename={() => setRenamingSection(`${s.id}::${sec.id}`)}
+                        onDelete={() => onDeleteSection(s.id, sec)}
+                      />
+                    }
+                  />
+                ),
+              )}
           </div>
         ))}
         {adding && (
@@ -441,10 +528,12 @@ function InlineNameInput({
   );
 }
 
-function SuiteMenu({
+function RowMenu({
+  title,
   onRename,
   onDelete,
 }: {
+  title: string;
   onRename: () => void;
   onDelete: () => void;
 }) {
@@ -453,7 +542,7 @@ function SuiteMenu({
     <div className="relative" onClick={(e) => e.stopPropagation()}>
       <button
         onClick={() => setOpen((o) => !o)}
-        title="Suite actions"
+        title={title}
         className={cn(
           "rounded-control p-0.5 text-text-muted transition-opacity hover:bg-bg-surface-2 hover:text-text-primary",
           open ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -522,6 +611,8 @@ function TreeRow({
   active,
   indent,
   hasChildren,
+  expanded,
+  onToggle,
   onClick,
   menu,
 }: {
@@ -530,6 +621,8 @@ function TreeRow({
   active?: boolean;
   indent?: boolean;
   hasChildren?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
   onClick: () => void;
   menu?: React.ReactNode;
 }) {
@@ -548,7 +641,16 @@ function TreeRow({
       )}
     >
       {hasChildren ? (
-        <ChevronRight size={13} className="text-text-muted" />
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggle?.();
+          }}
+          title={expanded ? "Collapse" : "Expand"}
+          className="-m-0.5 rounded-control p-0.5 text-text-muted hover:text-text-primary"
+        >
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+        </button>
       ) : (
         !indent && <span className="w-[13px]" />
       )}

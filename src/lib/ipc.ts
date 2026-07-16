@@ -100,6 +100,10 @@ export const api = {
   renameSuite: (id: string, name: string) =>
     invoke<void>("rename_suite", { id, name }),
   deleteSuite: (id: string) => invoke<void>("delete_suite", { id }),
+  renameSection: (suite: string, id: string, name: string) =>
+    invoke<void>("rename_section", { suite, id, name }),
+  deleteSection: (suite: string, id: string) =>
+    invoke<void>("delete_section", { suite, id }),
   listCases: () => invoke<CaseSummary[]>("list_cases"),
   getCase: (id: string) =>
     invoke<TestCase>("get_case", { id }).then(normalizeCase),

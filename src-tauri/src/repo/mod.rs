@@ -415,6 +415,70 @@ pub fn delete_suite(paths: &Paths, id: &str) -> Result<Vec<String>> {
     Ok(removed)
 }
 
+/// Rename a section's display name. The id (and thus the section filename and
+/// the `section:` references in case front matter) stays stable so nothing has
+/// to be rewritten. The change is left uncommitted for the user to review.
+pub fn rename_section(paths: &Paths, suite: &str, id: &str, name: &str) -> Result<()> {
+    let yml = paths
+        .suites_dir()
+        .join(suite)
+        .join("sections")
+        .join(format!("{id}.yml"));
+    let content =
+        fs::read_to_string(&yml).map_err(|_| Error::Other(format!("section not found: {id}")))?;
+    let mut section: Section = serde_yaml::from_str(&content)?;
+    section.name = name.to_string();
+    fs::write(&yml, serde_yaml::to_string(&section)?)?;
+    Ok(())
+}
+
+/// Delete a section from a suite. Removes the section file, detaches any child
+/// sections (their `parent` is cleared so they don't reference a missing
+/// section), and drops the `section:` assignment from every case that pointed
+/// at it. The cases themselves are kept; only their section reference is
+/// cleared. The change is left uncommitted for the user to review.
+pub fn delete_section(paths: &Paths, suite: &str, id: &str) -> Result<()> {
+    let sections_dir = paths.suites_dir().join(suite).join("sections");
+    let yml = sections_dir.join(format!("{id}.yml"));
+    if !yml.is_file() {
+        return Err(Error::Other(format!("section not found: {id}")));
+    }
+    fs::remove_file(&yml)?;
+
+    // Detach any child sections so they don't reference a now-missing parent.
+    for entry in fs::read_dir(&sections_dir)? {
+        let p = entry?.path();
+        if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+            continue;
+        }
+        let mut section: Section = serde_yaml::from_str(&fs::read_to_string(&p)?)?;
+        if section.parent.as_deref() == Some(id) {
+            section.parent = None;
+            fs::write(&p, serde_yaml::to_string(&section)?)?;
+        }
+    }
+
+    // Drop the section assignment from any case that referenced it. Skip files
+    // whose front matter won't parse rather than aborting the whole delete.
+    let cases_dir = paths.suites_dir().join(suite).join("cases");
+    if cases_dir.is_dir() {
+        for entry in fs::read_dir(&cases_dir)? {
+            let p = entry?.path();
+            if p.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(mut case) = case_file::parse(&fs::read_to_string(&p)?) else {
+                continue;
+            };
+            if case.front.section.as_deref() == Some(id) {
+                case.front.section = None;
+                fs::write(&p, case_file::serialize(&case)?)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Move a case into another suite: rewrite `suite:` in the front matter and
 /// relocate the file, keeping its filename so Git can detect the rename.
 /// Automation links key on the case id and stay valid.
