@@ -522,6 +522,14 @@ const AUTOSTASH_CONFLICT: &str = "Applying autostash resulted in conflicts";
 /// around the pull; when reapplying them conflicts, git keeps them in the
 /// stash and we report `StashConflicts` so the UI can offer `stash_pop`.
 pub fn sync(root: &Path) -> Result<SyncOutcome> {
+    // A branch created in-app has no upstream and does not yet exist on the
+    // remote, so there is nothing to pull; a `git pull` would fail with "no
+    // tracking information". Publish it straight away instead (push sets the
+    // upstream), so Sync works as the first push of a new branch.
+    if !has_upstream(root) {
+        let pushed = push(root)?;
+        return Ok(SyncOutcome::new(SyncStatus::Ok, format!("$ git push\n{pushed}")));
+    }
     let (ok, pull) = git_capture(root, &["pull", "--ff-only", "--autostash"])?;
     let mut log = format!("$ git pull --ff-only --autostash\n{pull}");
     if !ok {

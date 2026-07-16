@@ -123,6 +123,32 @@ fn push_publishes_a_new_branch_without_autosetup() {
     assert_eq!(git::status(&repo).unwrap().ahead, 0, "second push landed");
 }
 
+/// Sync on a branch that does not yet exist on the remote must not fail trying
+/// to pull a non-existent upstream: it publishes the branch (the first push).
+#[test]
+fn sync_publishes_a_new_branch_instead_of_failing_on_pull() {
+    let (ours, _peer) = setup();
+    sh(&ours, &["config", "push.autoSetupRemote", "false"]);
+
+    let repo = git::open(&ours).unwrap();
+    git::create_branch(&repo, "feature/sync-new").unwrap();
+    drop(repo);
+
+    write_case(&ours, &case_file("On a fresh branch"));
+    sh(&ours, &["add", "."]);
+    sh(&ours, &["commit", "-m", "branch work"]);
+
+    let out = git::sync(&ours).unwrap();
+    assert_eq!(out.status, SyncStatus::Ok, "log: {}", out.log);
+
+    let repo = git::open(&ours).unwrap();
+    let branch = repo
+        .find_branch("feature/sync-new", git2::BranchType::Local)
+        .unwrap();
+    assert!(branch.upstream().is_ok(), "upstream set by the sync push");
+    assert_eq!((git::status(&repo).unwrap().ahead), 0, "branch published");
+}
+
 #[test]
 fn sync_fast_forwards_when_behind() {
     let (ours, peer) = setup();
