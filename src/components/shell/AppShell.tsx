@@ -21,7 +21,7 @@ import { Automation } from "@/screens/Automation";
 import { Changes } from "@/screens/Changes";
 import { MergeView } from "@/screens/MergeView";
 import { Settings } from "@/screens/Settings";
-import { Placeholder } from "@/screens/Placeholder";
+import { Reports } from "@/screens/Reports";
 
 export function AppShell() {
   const view = useSession((s) => s.view);
@@ -64,12 +64,7 @@ export function AppShell() {
           {view === "automation" && <Automation />}
           {view === "changes" && <Changes />}
           {view === "merge" && <MergeView />}
-          {view === "reports" && (
-            <Placeholder
-              title="Reports"
-              blurb="Pass rate over time, per-suite health, and flakiness trends derived from Git history."
-            />
-          )}
+          {view === "reports" && <Reports />}
           {view === "settings" && <Settings />}
         </main>
         <AssistantPanel />

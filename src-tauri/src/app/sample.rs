@@ -287,10 +287,12 @@ fn seed_runs(paths: &Paths) -> Result<()> {
         },
     )?;
     record(paths, &r3.id, ResultStatus::Passed, "marco", &[
-        "TC-0001", "TC-0007", "TC-0009", "TC-0011", "TC-0014", "TC-0021",
+        "TC-0001", "TC-0007", "TC-0009", "TC-0014", "TC-0021",
     ])?;
     record(paths, &r3.id, ResultStatus::Failed, "marco", &["TC-0008"])?;
-    // TC-0010 intentionally left untested.
+    // A blocked case and one awaiting retest, so results are not all pass/fail.
+    record(paths, &r3.id, ResultStatus::Blocked, "marco", &["TC-0010"])?;
+    record(paths, &r3.id, ResultStatus::Retest, "marco", &["TC-0011"])?;
 
     // Smoke nightly: a completed, all-green smoke pass.
     let smoke = runs::create_run(
@@ -325,10 +327,14 @@ fn seed_runs(paths: &Paths) -> Result<()> {
             cases: vec![],
         },
     )?;
+    // TC-0009 passed in R3 but fails here: a regression, so Reports flags it as
+    // flaky (results disagree across runs).
     record(paths, &checkout.id, ResultStatus::Passed, "priya", &[
-        "TC-0007", "TC-0009", "TC-0011", "TC-0014",
+        "TC-0007", "TC-0011", "TC-0014",
     ])?;
-    record(paths, &checkout.id, ResultStatus::Failed, "priya", &["TC-0008", "TC-0010"])?;
+    record(paths, &checkout.id, ResultStatus::Failed, "priya", &[
+        "TC-0009", "TC-0008", "TC-0010",
+    ])?;
     runs::set_run_state(paths, &checkout.id, RunState::Complete)?;
 
     Ok(())
