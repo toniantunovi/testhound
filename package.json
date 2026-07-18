@@ -1,7 +1,7 @@
 {
   "name": "testhound",
   "private": true,
-  "version": "0.7.4",
+  "version": "0.7.5",
   "type": "module",
   "description": "A Git-native, AI-powered test management desktop app",
   "license": "MIT",
