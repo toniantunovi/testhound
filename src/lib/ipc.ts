@@ -94,6 +94,7 @@ export const api = {
     invoke<ProjectInfo>("scaffold_project", { path, name, seed }),
   openProject: (path: string) => invoke<ProjectInfo>("open_project", { path }),
   currentProject: () => invoke<ProjectInfo | null>("current_project"),
+  closeProject: () => invoke<void>("close_project"),
 
   listSuites: () => invoke<SuiteTree[]>("list_suites"),
   createSuite: (name: string) => invoke<string>("create_suite", { name }),

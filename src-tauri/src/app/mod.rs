@@ -232,6 +232,18 @@ pub async fn current_project(
     Ok(Some(info))
 }
 
+/// Close the current project: drop the in-memory handle and forget the
+/// remembered project, so both the UI (now) and the next launch return to
+/// onboarding instead of reopening it.
+#[tauri::command]
+pub fn close_project(app: AppHandle, state: tauri::State<AppState>) -> Result<()> {
+    *state.open.lock().unwrap() = None;
+    if let Some(file) = last_project_file(&app) {
+        let _ = std::fs::remove_file(file);
+    }
+    Ok(())
+}
+
 /// Create a new test suite from a display name. The id is a slug of the name;
 /// errors if a suite with that id already exists. Returns the new suite id. The
 /// change lands in the working tree for review in the Changes panel.

@@ -1,14 +1,17 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { open as openDialog, ask } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDown,
   ArrowUp,
   Check,
   ChevronDown,
+  Command,
+  FolderOpen,
   GitBranch,
   GitMerge,
-  Command,
   Loader2,
+  LogOut,
   Plus,
   RefreshCw,
   Sparkles,
@@ -22,6 +25,7 @@ import { cn } from "@/lib/utils";
 
 export function RepoBar() {
   const project = useSession((s) => s.project);
+  const setProject = useSession((s) => s.setProject);
   const navigate = useSession((s) => s.navigate);
   const togglePalette = useSession((s) => s.togglePalette);
   const toggleAssistant = useAssistant((s) => s.toggle);
@@ -32,6 +36,7 @@ export function RepoBar() {
   const qc = useQueryClient();
   const [branchOpen, setBranchOpen] = useState(false);
   const [newBranch, setNewBranch] = useState("");
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 
   // Git failures land in the activity console; pop it open so they are seen.
   const surfaceError = (e: unknown) => {
@@ -84,6 +89,55 @@ export function RepoBar() {
 
   const syncFlow = useSync();
 
+  // Switching projects while the app is already open: everything derived from
+  // the working tree must be refetched for the newly opened repo.
+  const afterProjectChange = () => {
+    setProjectMenuOpen(false);
+    navigate("dashboard");
+    qc.invalidateQueries();
+  };
+
+  // Pick a folder and open it. If it has no TestHound project, offer to
+  // scaffold one in place (mirrors onboarding, without the demo seed).
+  const openAnotherProject = async () => {
+    setProjectMenuOpen(false);
+    const selected = await openDialog({ directory: true, multiple: false });
+    if (typeof selected !== "string") return;
+    try {
+      const info = await api.inspectRepo(selected);
+      let opened;
+      if (info.hasProject) {
+        opened = await api.openProject(info.path);
+      } else {
+        const create = await ask(
+          "This folder has no TestHound project yet.\n\nScaffold one here and open it?",
+          { title: "No project found", kind: "warning", okLabel: "Scaffold", cancelLabel: "Cancel" },
+        );
+        if (!create) return;
+        const name =
+          info.path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ||
+          "TestHound Project";
+        opened = await api.scaffoldProject(info.path, name, false);
+      }
+      setProject(opened);
+      afterProjectChange();
+    } catch (e) {
+      surfaceError(e);
+    }
+  };
+
+  // Close the project: clears backend state + the remembered project, so the
+  // app returns to onboarding (and stays there on the next launch).
+  const closeCurrentProject = async () => {
+    setProjectMenuOpen(false);
+    try {
+      await api.closeProject();
+    } catch (e) {
+      surfaceError(e);
+    }
+    setProject(null);
+  };
+
   return (
     <header
       data-tauri-drag-region
@@ -96,10 +150,43 @@ export function RepoBar() {
       </div>
 
       {/* Project switcher */}
-      <button className="th-no-drag flex items-center gap-1 rounded-control px-2 py-1 text-sm text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary">
-        {project?.name ?? "No project"}
-        <ChevronDown size={13} className="text-text-muted" />
-      </button>
+      <div className="relative th-no-drag">
+        <button
+          onClick={() => setProjectMenuOpen((o) => !o)}
+          title="Open another project or close this one"
+          className="flex items-center gap-1 rounded-control px-2 py-1 text-sm text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+        >
+          {project?.name ?? "No project"}
+          <ChevronDown size={13} className="text-text-muted" />
+        </button>
+        {projectMenuOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setProjectMenuOpen(false)}
+            />
+            <div className="absolute left-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
+              <div className="truncate px-3 pb-1 pt-1.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
+                {project?.name ?? "No project"}
+              </div>
+              <button
+                onClick={openAnotherProject}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+              >
+                <FolderOpen size={13} className="text-brand-primary" />
+                Open another project…
+              </button>
+              <button
+                onClick={closeCurrentProject}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+              >
+                <LogOut size={13} className="text-text-muted" />
+                Close project
+              </button>
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Branch selector */}
       <div className="relative th-no-drag">

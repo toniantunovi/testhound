@@ -69,6 +69,7 @@ pub fn run() {
             app::scaffold_project,
             app::open_project,
             app::current_project,
+            app::close_project,
             app::create_suite,
             app::rename_suite,
             app::delete_suite,
