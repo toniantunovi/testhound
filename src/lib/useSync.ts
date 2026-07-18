@@ -10,6 +10,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ask } from "@tauri-apps/plugin-dialog";
 import { api, errMsg } from "@/lib/ipc";
+import { track } from "@/lib/telemetry";
 import type { SyncOutcome } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
@@ -34,6 +35,15 @@ export function useSync(opts: { auto?: boolean } = {}) {
     out.log.split("\n").forEach((l) => l && push(l));
     qc.invalidateQueries({ queryKey: ["git-status"] });
     qc.invalidateQueries({ queryKey: ["conflicts"] });
+    // A sync flow reached a terminal state. `diverged` is not terminal: it just
+    // kicks off a merge whose outcome lands back here. Record the sync-pain /
+    // WAU signal once, tagged with whether it ended in conflicts.
+    if (out.status !== "diverged") {
+      void track("sync_performed", {
+        had_conflict:
+          out.status === "conflicts" || out.status === "stash-conflicts",
+      });
+    }
     switch (out.status) {
       case "ok":
         // A pull may have brought in new cases, runs, or results; refresh

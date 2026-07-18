@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
+import { countBucket, track } from "@/lib/telemetry";
 import type { CaseSummary, Priority, Section, SuiteTree } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
@@ -60,6 +61,7 @@ export function Cases() {
         "New test case",
       ),
     onSuccess: (created) => {
+      void track("case_created", { count_bucket: countBucket(cases.length + 1) });
       qc.invalidateQueries({ queryKey: ["cases"] });
       qc.invalidateQueries({ queryKey: ["suites"] });
       openCase(created.id);

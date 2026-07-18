@@ -10,6 +10,7 @@ import {
   Stethoscope,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
+import { track } from "@/lib/telemetry";
 import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
@@ -65,7 +66,10 @@ export function RunView() {
       status: ResultStatus;
       comment: string | null;
     }) => api.setResult(id!, v.caseId, v.status, v.comment, null),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      void track("result_recorded", { source: "manual" });
+      invalidate();
+    },
   });
 
   const setState = useMutation({

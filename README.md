@@ -14,6 +14,7 @@ TestHound is a modern alternative to tools like TestRail, built as a Tauri deskt
 - **Manual and automated stay in sync.** Manual cases link to Playwright specs, with automatic drift detection when a case changes.
 - **Agents do the repetitive work.** Claude Code or Codex draft and maintain Playwright specs and help triage failures.
 - **No lock-in.** Removing TestHound leaves behind a fully usable, documented repository.
+- **Privacy by default.** TestHound sends only a strictly anonymous usage stream (a random install id and coarse counts, never your titles, paths, repos, or code). Turn it off in Settings, via Do-Not-Track, or with `TESTHOUND_TELEMETRY=0`. See [PRIVACY.md](PRIVACY.md).
 
 ## Features
 
@@ -101,3 +102,7 @@ git push origin v0.2.0
 To enable signed updates for a fork: generate a keypair with `pnpm tauri signer generate -w ~/.tauri/testhound.key`, replace `plugins.updater.pubkey` and the endpoint owner/repo in `src-tauri/tauri.conf.json`, and set the `TAURI_SIGNING_PRIVATE_KEY` repo secret (and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` if the key has a password).
 
 macOS builds are ad-hoc signed until the Apple signing secrets are configured. To produce notarized builds, set the `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` repo secrets (see the comments in `release.yml`); `tauri-action` then signs and notarizes automatically.
+
+## License
+
+TestHound is released under the [MIT License](LICENSE). Copyright © 2026 Voldeq GmbH.

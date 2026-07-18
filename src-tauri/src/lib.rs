@@ -103,6 +103,7 @@ pub fn run() {
             app::open_trace,
             app::open_url,
             app::open_in_editor,
+            app::telemetry_capture,
             app::list_agents,
             app::coverage,
             app::automation_context,

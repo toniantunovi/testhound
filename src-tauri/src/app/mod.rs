@@ -738,6 +738,73 @@ pub fn open_trace(path: String, state: tauri::State<AppState>) -> Result<()> {
     playwright::show_trace(&state.paths()?, &path)
 }
 
+/// PostHog project (US region). The capture key is write-only and safe to ship,
+/// but living here keeps it out of the JS bundle entirely.
+const POSTHOG_HOST: &str = "https://us.i.posthog.com";
+const POSTHOG_KEY: &str = "phc_uhEqpdoFwh8MLSwoGUHUJxSsUNXNBRDyHTpRqUzEKkh3";
+
+/// Whether anonymous telemetry is disabled by the `TESTHOUND_TELEMETRY`
+/// environment variable. Setting it to `0`, `false`, `off`, or `no` opts out
+/// regardless of the in-app setting.
+fn telemetry_env_disabled() -> bool {
+    match std::env::var("TESTHOUND_TELEMETRY") {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
+        Err(_) => false,
+    }
+}
+
+/// Send one anonymous telemetry event to PostHog. Runs the POST from Rust
+/// rather than the webview so it can never be blocked by webview fetch/CORS
+/// quirks or content blockers, and so the capture key stays out of the bundle.
+/// Fire-and-forget: spawns a thread, returns immediately, never surfaces an
+/// error. The frontend has already applied the opt-out/DNT gates; the env-var
+/// opt-out is enforced here as the authoritative backstop. `app_version` and
+/// `os` are stamped here so they are always accurate.
+#[tauri::command]
+pub fn telemetry_capture(event: String, distinct_id: String, props: serde_json::Value) {
+    if telemetry_env_disabled() {
+        return;
+    }
+    let os = if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        "other"
+    };
+    let mut properties = match props {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    properties.insert("$lib".into(), "testhound".into());
+    properties.insert("app_version".into(), env!("CARGO_PKG_VERSION").into());
+    properties.insert("os".into(), os.into());
+
+    let body = serde_json::json!({
+        "api_key": POSTHOG_KEY,
+        "event": event,
+        "distinct_id": distinct_id,
+        "properties": properties,
+    })
+    .to_string();
+
+    std::thread::spawn(move || {
+        let agent = ureq::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build();
+        // Best-effort: telemetry must never disrupt the app.
+        let _ = agent
+            .post(&format!("{POSTHOG_HOST}/i/v0/e/"))
+            .set("Content-Type", "application/json")
+            .send_string(&body);
+    });
+}
+
 /// Open an http(s) link in the user's default browser. Scheme-checked so the
 /// assistant panel can safely linkify arbitrary model output.
 #[tauri::command]

@@ -133,7 +133,7 @@ export function CommandPalette() {
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Type a command or search…"
+          placeholder="Type a command…"
           className="w-full border-b border-border-subtle bg-transparent px-4 py-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
         />
         <div className="max-h-[50vh] overflow-auto py-1.5">

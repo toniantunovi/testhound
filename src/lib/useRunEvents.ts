@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { runEvents } from "@/lib/ipc";
+import { track } from "@/lib/telemetry";
 import type { PlaywrightSummary } from "@/lib/types";
 import { useActivity } from "@/store/activity";
 import { useSession } from "@/store/session";
@@ -60,6 +61,8 @@ export function useRunEvents() {
           const line = summarize(e.summary);
           push(`Done - ${line}`);
           finish(line);
+          // A completed automated run ingested results for this run's cases.
+          void track("result_recorded", { source: "playwright" });
         } else {
           finish(null);
         }

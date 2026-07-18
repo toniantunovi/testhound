@@ -8,6 +8,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
+import { track } from "@/lib/telemetry";
 import type { ProjectInfo, RepoInfo } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ export function Onboarding({ onReady }: { onReady: (p: ProjectInfo) => void }) {
       const project = info.hasProject
         ? await api.openProject(info.path)
         : await api.scaffoldProject(info.path, name || "TestHound Project", seed);
+      void track("project_opened", { is_new: !info.hasProject });
       onReady(project);
     } catch (e) {
       setError(errMsg(e));

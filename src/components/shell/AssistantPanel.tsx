@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, assistantEvents, errMsg } from "@/lib/ipc";
+import { track } from "@/lib/telemetry";
 import type { AgentAvailability, ChatMessage } from "@/lib/types";
 import { useAssistant } from "@/store/assistant";
 import { cn } from "@/lib/utils";
@@ -110,6 +111,9 @@ export function AssistantPanel() {
             )
             .then((linked) => {
               if (linked) {
+                // A generated spec was good enough to accept and link: the
+                // differentiator-value signal.
+                void track("spec_accepted", { agent: generator });
                 clearGeneration();
                 REFRESH_KEYS.forEach((k) =>
                   qc.invalidateQueries({ queryKey: [k] }),

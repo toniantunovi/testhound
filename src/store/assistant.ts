@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { track } from "@/lib/telemetry";
 
 export interface AssistantMsg {
   /** For an assistant turn this equals the turn id it was streamed under. */
@@ -74,8 +75,13 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     }),
   prefill: (draft) => set({ draft, open: true }),
   clearDraft: () => set({ draft: null }),
-  startGeneration: (caseId, update, prompt) =>
-    set({ pendingGeneration: { caseId, update }, draft: prompt, open: true }),
+  startGeneration: (caseId, update, prompt) => {
+    // The user kicked off a spec generation/update via the coverage view: the
+    // differentiator-adoption signal. Acceptance is tracked separately once a
+    // spec actually lands and links (see AssistantPanel).
+    void track("spec_generated", { agent: get().agentId, update });
+    set({ pendingGeneration: { caseId, update }, draft: prompt, open: true });
+  },
   clearGeneration: () => set({ pendingGeneration: null }),
 
   beginTurn: (turnId, userText) =>

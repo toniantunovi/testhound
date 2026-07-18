@@ -7,10 +7,10 @@ import {
   ChevronDown,
   GitBranch,
   GitMerge,
+  Command,
   Loader2,
   Plus,
   RefreshCw,
-  Search,
   Sparkles,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
@@ -229,10 +229,11 @@ export function RepoBar() {
       {/* Command palette */}
       <button
         onClick={togglePalette}
+        title="Open the command palette"
         className="th-no-drag flex items-center gap-2 rounded-control border border-border-subtle bg-bg-base px-2.5 py-1 text-xs text-text-muted hover:border-border-strong"
       >
-        <Search size={12} />
-        <span>Search</span>
+        <Command size={12} />
+        <span>Commands</span>
         <kbd className="rounded bg-bg-surface-2 px-1 font-mono text-[10px] text-text-secondary">
           ⌘K
         </kbd>

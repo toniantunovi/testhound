@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Play } from "lucide-react";
 import { api } from "@/lib/ipc";
+import { countBucket, track } from "@/lib/telemetry";
 import type { IncludeMode } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { cn } from "@/lib/utils";
@@ -72,6 +73,7 @@ export function NewRun() {
         cases: mode === "explicit" ? picked : [],
       }),
     onSuccess: (run) => {
+      void track("run_created", { case_count_bucket: countBucket(preview.length) });
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });

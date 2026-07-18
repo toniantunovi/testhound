@@ -2,7 +2,9 @@
 name = "testhound"
 version = "0.7.3"
 description = "A Git-native, AI-powered test management desktop app"
-authors = ["TestHound"]
+authors = ["Voldeq GmbH"]
+license = "MIT"
+publish = false
 edition = "2021"
 rust-version = "1.77"
 
@@ -30,6 +32,9 @@ thiserror = "2"
 walkdir = "2"
 sha2 = "0.10"
 slug = "0.1"
+# Anonymous telemetry POST. rustls (no OpenSSL) to match the project's
+# no-OpenSSL stance (see git2 above). Only used to fire-and-forget events.
+ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [features]
 # This feature is used for production builds or when a dev server is not specified,

@@ -7,6 +7,7 @@ import {
   Globe,
   Plus,
   RefreshCw,
+  ShieldCheck,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -27,6 +28,7 @@ export function Settings() {
           <TestTargetSection />
           <LfsSection />
           <UpdatesSection />
+          <PrivacySection />
         </div>
       </div>
     </div>
@@ -360,6 +362,71 @@ function UpdatesSection() {
           <span>{info.error}</span>
         </p>
       )}
+    </Section>
+  );
+}
+
+function PrivacySection() {
+  const analyticsEnabled = usePrefs((s) => s.analyticsEnabled);
+  const setAnalyticsEnabled = usePrefs((s) => s.setAnalyticsEnabled);
+
+  return (
+    <Section
+      icon={<ShieldCheck size={15} className="text-brand-accent" />}
+      title="Privacy & anonymous usage"
+      blurb="TestHound sends a small, strictly anonymous usage stream so we know which features land and what to build next. It is tied only to a random install id, never to you or your work."
+    >
+      <div className="mb-4 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2 text-sm">
+          {analyticsEnabled ? (
+            <span className="inline-flex items-center gap-1.5 text-status-passed">
+              <Check size={14} /> On, anonymous usage stats are shared
+            </span>
+          ) : (
+            <span className="text-text-secondary">Off, nothing is sent</span>
+          )}
+        </div>
+        <Button
+          variant={analyticsEnabled ? "secondary" : "primary"}
+          onClick={() => setAnalyticsEnabled(!analyticsEnabled)}
+        >
+          {analyticsEnabled ? "Turn off" : "Turn on"}
+        </Button>
+      </div>
+
+      <div className="rounded-control border border-border-subtle bg-bg-base p-3">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
+          What is sent
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-text-secondary">
+          A random install id, the event name, app version, and OS, plus coarse
+          counts and yes/no flags (for example: a case was created, a run
+          finished, a sync hit a conflict).
+        </p>
+        <p className="mt-2.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
+          What is never sent
+        </p>
+        <p className="mt-1.5 text-xs leading-relaxed text-text-secondary">
+          Case titles, file paths, repository names or URLs, git remotes, branch
+          names, code, spec contents, base URLs, and environment variables.
+        </p>
+        <p className="mt-2.5 text-[11px] text-text-muted">
+          Also respects your browser&apos;s Do-Not-Track and the{" "}
+          <span className="font-mono">TESTHOUND_TELEMETRY=0</span> environment
+          variable. See{" "}
+          <button
+            onClick={() =>
+              void api.openUrl(
+                "https://github.com/toniantunovi/testhound/blob/main/PRIVACY.md",
+              )
+            }
+            className="text-brand-primary underline decoration-brand-primary/40 underline-offset-2 hover:decoration-brand-primary"
+          >
+            PRIVACY.md
+          </button>
+          .
+        </p>
+      </div>
     </Section>
   );
 }

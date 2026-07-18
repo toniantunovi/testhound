@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ShieldCheck, X } from "lucide-react";
 import { RepoBar } from "./RepoBar";
 import { Sidebar } from "./Sidebar";
 import { ActivityConsole } from "./ActivityConsole";
@@ -8,6 +9,7 @@ import { useRunEvents } from "@/lib/useRunEvents";
 import { useAutoSync } from "@/lib/useAutoSync";
 import { useSession } from "@/store/session";
 import { useAssistant } from "@/store/assistant";
+import { usePrefs } from "@/store/prefs";
 import { Dashboard } from "@/screens/Dashboard";
 import { Cases } from "@/screens/Cases";
 import { CaseEditor } from "@/screens/CaseEditor";
@@ -47,6 +49,7 @@ export function AppShell() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      <Banner />
       <RepoBar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
@@ -73,6 +76,43 @@ export function AppShell() {
       </div>
       <ActivityConsole />
       <CommandPalette />
+    </div>
+  );
+}
+
+/** Slim, one-time, dismissible notice explaining the anonymous telemetry
+ *  (transparent opt-out). Remembered in prefs once acknowledged. */
+function Banner() {
+  const navigate = useSession((s) => s.navigate);
+  const telemetryNoticeSeen = usePrefs((s) => s.telemetryNoticeSeen);
+  const markTelemetryNoticeSeen = usePrefs((s) => s.markTelemetryNoticeSeen);
+
+  if (telemetryNoticeSeen) return null;
+
+  return (
+    <div className="flex items-center gap-2 border-b border-border-subtle bg-bg-surface px-4 py-2 text-xs text-text-secondary">
+      <ShieldCheck size={14} className="shrink-0 text-brand-accent" />
+      <span className="min-w-0 flex-1">
+        TestHound shares strictly anonymous usage stats to improve the product:
+        a random install id and coarse counts, never your titles, paths, repos,
+        or code. Manage it any time in Settings.
+      </span>
+      <button
+        onClick={() => {
+          markTelemetryNoticeSeen();
+          navigate("settings");
+        }}
+        className="shrink-0 rounded-control px-2 py-1 text-brand-primary hover:bg-bg-surface-2"
+      >
+        Review
+      </button>
+      <button
+        onClick={markTelemetryNoticeSeen}
+        title="Dismiss"
+        className="shrink-0 rounded-control p-1 text-text-muted hover:bg-bg-surface-2 hover:text-text-primary"
+      >
+        <X size={14} />
+      </button>
     </div>
   );
 }
