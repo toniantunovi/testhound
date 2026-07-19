@@ -14,6 +14,7 @@ import { track } from "@/lib/telemetry";
 import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
+import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { TriageModal } from "@/screens/TriageModal";
 import { RunCasePanel, STATUS_KEYS } from "@/screens/RunCasePanel";
 import { cn, initials, relativeTime } from "@/lib/utils";
@@ -29,6 +30,8 @@ export function RunView() {
   const id = useSession((s) => s.openRunId);
   const navigate = useSession((s) => s.navigate);
   const runningRunId = useActivity((s) => s.runningRunId);
+  const openPwSetup = usePlaywrightSetup((s) => s.open);
+  const pwInitializing = usePlaywrightSetup((s) => s.initializing);
   const qc = useQueryClient();
   const [triage, setTriage] = useState<{ caseId: string; title: string } | null>(
     null,
@@ -149,12 +152,28 @@ export function RunView() {
             </Button>
           </>
         ) : (
-          <span
-            className="text-[11px] text-text-muted"
-            title="Add a playwright.config to the repo root to enable automated runs"
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={pwInitializing}
+            title={
+              pwInitializing
+                ? "The assistant is setting Playwright up; this enables once it finishes"
+                : "Playwright is not set up in this repo. Click to initialize it, then run."
+            }
+            onClick={openPwSetup}
           >
-            Playwright not detected
-          </span>
+            {pwInitializing ? (
+              <>
+                <Loader2 size={13} className="animate-spin" /> Initializing
+                Playwright…
+              </>
+            ) : (
+              <>
+                <Play size={13} /> Run automated
+              </>
+            )}
+          </Button>
         )}
         {run.state !== "complete" && (
           <Button size="sm" onClick={() => setState.mutate("complete")}>

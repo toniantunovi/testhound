@@ -14,6 +14,7 @@ import { api, errMsg } from "@/lib/ipc";
 import type { Coverage, CoverageRow } from "@/lib/types";
 import { useAssistant } from "@/store/assistant";
 import { useSession } from "@/store/session";
+import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { SpecEditorModal } from "./SpecEditorModal";
@@ -281,20 +282,13 @@ const SETUP_PLACEHOLDER = `Everything an agent (or a new teammate) needs to auto
 - Auth via the storageState setup project, do not log in per test
 - Prefer getByRole/getByTestId; fixtures live in tests/fixtures/`;
 
-/** Staged in the assistant when Playwright is missing; the user reviews and sends. */
-const PLAYWRIGHT_SETUP_PROMPT = `Set up Playwright for end-to-end testing in this repo:
-1. Add @playwright/test as a dev dependency using the repo's package manager.
-2. Create playwright.config.ts with testDir ./tests and use.baseURL read from process.env.BASE_URL.
-3. Run \`npx playwright install\` to download the browsers.
-4. Add a minimal smoke spec that opens the base URL, and verify the setup with \`npx playwright test --list\` followed by a headed run of the smoke spec.
-Finish with a short summary of what you set up and anything I still need to configure (like BASE_URL in TestHound's Settings).`;
-
 /** General test setup: detected Playwright facts, the committed setup notes
  *  fed to agents, and the machine-local target env where credentials live. */
 function SetupPanel() {
   const qc = useQueryClient();
   const navigate = useSession((s) => s.navigate);
-  const prefillAssistant = useAssistant((s) => s.prefill);
+  const openPwSetup = usePlaywrightSetup((s) => s.open);
+  const pwInitializing = usePlaywrightSetup((s) => s.initializing);
 
   const { data: pw } = useQuery({
     queryKey: ["playwright-info"],
@@ -356,10 +350,11 @@ function SetupPanel() {
               variant="secondary"
               size="sm"
               className="shrink-0"
-              onClick={() => prefillAssistant(PLAYWRIGHT_SETUP_PROMPT)}
+              disabled={pwInitializing}
+              onClick={openPwSetup}
             >
               <Sparkles size={12} className="text-brand-accent" />
-              Set up with assistant
+              {pwInitializing ? "Initializing…" : "Set up with assistant"}
             </Button>
           </div>
         )}

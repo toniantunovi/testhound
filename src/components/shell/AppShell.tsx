@@ -5,6 +5,7 @@ import { Sidebar } from "./Sidebar";
 import { ActivityConsole } from "./ActivityConsole";
 import { CommandPalette } from "./CommandPalette";
 import { AssistantPanel } from "./AssistantPanel";
+import { InitPlaywrightDialog } from "@/components/InitPlaywrightDialog";
 import { useRunEvents } from "@/lib/useRunEvents";
 import { useAutoSync } from "@/lib/useAutoSync";
 import { useSession } from "@/store/session";
@@ -71,6 +72,7 @@ export function AppShell() {
       </div>
       <ActivityConsole />
       <CommandPalette />
+      <InitPlaywrightDialog />
     </div>
   );
 }

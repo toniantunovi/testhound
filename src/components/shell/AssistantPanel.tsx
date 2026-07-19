@@ -40,6 +40,7 @@ const REFRESH_KEYS = [
   "coverage",
   "git-status",
   "conflicts",
+  "playwright-info",
 ];
 
 function newTurnId(): string {
@@ -61,6 +62,8 @@ export function AssistantPanel() {
   const reset = useAssistant((s) => s.reset);
   const draft = useAssistant((s) => s.draft);
   const clearDraft = useAssistant((s) => s.clearDraft);
+  const pendingSend = useAssistant((s) => s.pendingSend);
+  const clearPendingSend = useAssistant((s) => s.clearPendingSend);
 
   const qc = useQueryClient();
   const [agents, setAgents] = useState<AgentAvailability[]>([]);
@@ -83,6 +86,33 @@ export function AssistantPanel() {
   useEffect(() => {
     refreshAgents();
   }, [refreshAgents]);
+
+  const noAgents = agents.length > 0 && !agents.some((a) => a.available);
+
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed || busy || noAgents) return;
+      const turnId = newTurnId();
+      const history: ChatMessage[] = messages
+        .filter((m) => !m.streaming && !m.error)
+        .map((m) => ({ role: m.role, content: m.content }));
+      beginTurn(turnId, trimmed);
+      setInput("");
+      try {
+        await api.assistantSend({
+          turnId,
+          agentId,
+          message: trimmed,
+          sessionId,
+          history,
+        });
+      } catch (e) {
+        finishTurn(turnId, "", null, errMsg(e));
+      }
+    },
+    [busy, noAgents, messages, beginTurn, agentId, sessionId, finishTurn],
+  );
 
   // Subscribe to streamed assistant events for the lifetime of the panel.
   useEffect(() => {
@@ -145,6 +175,22 @@ export function AssistantPanel() {
     setTimeout(() => textareaRef.current?.focus(), 0);
   }, [draft, clearDraft]);
 
+  // A queued prompt (e.g. background Playwright init) is sent automatically once
+  // an agent is available and no turn is in flight. With no agent installed it
+  // falls back to the composer so the user sees the NoAgents banner + the text.
+  useEffect(() => {
+    if (pendingSend === null || agents.length === 0) return;
+    if (noAgents) {
+      setInput(pendingSend);
+      clearPendingSend();
+      return;
+    }
+    if (busy) return;
+    const text = pendingSend;
+    clearPendingSend();
+    void send(text);
+  }, [pendingSend, agents.length, noAgents, busy, send, clearPendingSend]);
+
   // Grow the composer with its content (the max-height cap adds a scrollbar).
   useEffect(() => {
     const el = textareaRef.current;
@@ -199,29 +245,6 @@ export function AssistantPanel() {
   if (!open) return null;
 
   const activeAgent = agents.find((a) => a.id === agentId);
-  const noAgents = agents.length > 0 && !agents.some((a) => a.available);
-
-  const send = async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed || busy || noAgents) return;
-    const turnId = newTurnId();
-    const history: ChatMessage[] = messages
-      .filter((m) => !m.streaming && !m.error)
-      .map((m) => ({ role: m.role, content: m.content }));
-    beginTurn(turnId, trimmed);
-    setInput("");
-    try {
-      await api.assistantSend({
-        turnId,
-        agentId,
-        message: trimmed,
-        sessionId,
-        history,
-      });
-    } catch (e) {
-      finishTurn(turnId, "", null, errMsg(e));
-    }
-  };
 
   const stop = () => {
     api.assistantStop().catch(() => {});

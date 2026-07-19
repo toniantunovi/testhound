@@ -24,6 +24,9 @@ interface AssistantState {
   currentTurnId: string | null;
   /** Text waiting to be placed into the composer; the user confirms and sends. */
   draft: string | null;
+  /** Text queued to be sent automatically as a turn, no user confirmation. Used
+   *  by background flows like Playwright initialization. */
+  pendingSend: string | null;
   /** A spec generation/update awaiting its spec, so the panel can link it in
    *  code once the agent finishes (the agent never edits the case itself). */
   pendingGeneration: { caseId: string; update: boolean } | null;
@@ -36,6 +39,9 @@ interface AssistantState {
   /** Open the panel with `text` staged in the composer, awaiting user send. */
   prefill: (text: string) => void;
   clearDraft: () => void;
+  /** Open the panel and auto-send `text` as a turn (no user confirmation). */
+  queueSend: (text: string) => void;
+  clearPendingSend: () => void;
   /** Stage a generation prompt and remember which case it targets, so the panel
    *  can link the resulting spec once the turn completes. */
   startGeneration: (caseId: string, update: boolean, prompt: string) => void;
@@ -60,6 +66,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
   busy: false,
   currentTurnId: null,
   draft: null,
+  pendingSend: null,
   pendingGeneration: null,
 
   toggle: () => set((s) => ({ open: !s.open })),
@@ -75,6 +82,8 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     }),
   prefill: (draft) => set({ draft, open: true }),
   clearDraft: () => set({ draft: null }),
+  queueSend: (pendingSend) => set({ pendingSend, open: true }),
+  clearPendingSend: () => set({ pendingSend: null }),
   startGeneration: (caseId, update, prompt) => {
     // The user kicked off a spec generation/update via the coverage view: the
     // differentiator-adoption signal. Acceptance is tracked separately once a

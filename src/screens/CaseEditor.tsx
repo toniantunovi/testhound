@@ -6,6 +6,7 @@ import {
   Check,
   GitBranch,
   History,
+  Loader2,
   Play,
   Plus,
   Save,
@@ -22,6 +23,7 @@ import type {
 } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useAssistant } from "@/store/assistant";
+import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { AutomationBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
@@ -45,7 +47,14 @@ export function CaseEditor() {
   const openCaseHistory = useSession((s) => s.openCaseHistory);
   const openAutomation = useSession((s) => s.openAutomation);
   const startGeneration = useAssistant((s) => s.startGeneration);
+  const openPwSetup = usePlaywrightSetup((s) => s.open);
+  const pwInitializing = usePlaywrightSetup((s) => s.initializing);
   const qc = useQueryClient();
+
+  const { data: pw } = useQuery({
+    queryKey: ["playwright-info"],
+    queryFn: api.playwrightInfo,
+  });
 
   const { data: loaded } = useQuery({
     queryKey: ["case", id],
@@ -314,12 +323,27 @@ export function CaseEditor() {
                 variant="secondary"
                 size="sm"
                 className="mb-2 w-full"
-                disabled={runSpec.isPending}
-                title="Run this spec now in a visible browser (does not create a run)"
-                onClick={() => runSpec.mutate(draft.id)}
+                disabled={runSpec.isPending || pwInitializing}
+                title={
+                  pw?.detected
+                    ? "Run this spec now in a visible browser (does not create a run)"
+                    : "Playwright is not set up in this repo. Click to initialize it, then run."
+                }
+                onClick={() =>
+                  pw?.detected ? runSpec.mutate(draft.id) : openPwSetup()
+                }
               >
-                <Play size={13} className="text-brand-accent" />
-                Run in browser
+                {pwInitializing ? (
+                  <>
+                    <Loader2 size={13} className="animate-spin text-brand-accent" />
+                    Initializing Playwright…
+                  </>
+                ) : (
+                  <>
+                    <Play size={13} className="text-brand-accent" />
+                    Run in browser
+                  </>
+                )}
               </Button>
             )}
             <Button
