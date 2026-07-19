@@ -46,7 +46,10 @@ REPOSITORY LAYOUT
 - `{th}/suites/<suite-id>/cases/<TC-####>-<slug>.md` - a test case.
 - `{th}/suites/<suite-id>/sections/<section-id>.yml` - an optional section.
 - `{th}/runs/` - test runs and their recorded results.
-- `{th}/milestones/`, `{th}/configurations/` - milestones and configurations.
+- `{th}/milestones/`, `{th}/configurations/` - milestones and configurations. A
+  configuration option is a reporting dimension (e.g. a browser × form-factor);
+  give an option a `playwright_project:` to have runs tagged with it pass
+  `--project=<value>` to Playwright, otherwise the run uses the config's default.
 - `{th}/automation/links.yml` - links between manual cases and Playwright specs.
 - Playwright specs live under the project's `tests/` directory.
 

@@ -13,7 +13,7 @@ use crate::error::{Error, Result};
 use crate::repo::runs::{self, ResultInput};
 use crate::repo::Paths;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -616,9 +616,34 @@ fn report_path(paths: &Paths, run_id: &str) -> PathBuf {
         .join("report.json")
 }
 
+/// Map each configuration-option id to the Playwright `--project` it drives, for
+/// every option that declares one. Configuration options are a TestHound
+/// reporting dimension (browser × form-factor, etc.); only those explicitly
+/// mapped to a real Playwright project translate into a `--project` flag.
+pub fn project_map(paths: &Paths) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    if let Ok(cfgs) = crate::repo::runs::list_configurations(paths) {
+        for cfg in cfgs {
+            for opt in cfg.options {
+                if let Some(project) = opt.playwright_project {
+                    map.insert(opt.id, project);
+                }
+            }
+        }
+    }
+    map
+}
+
 /// Build the `playwright test` argument vector (after the program + leading
-/// args from [`runner`]). Kept pure for testing.
-pub fn build_args(plan: &RunPlan, run: &Run, headed: bool) -> Vec<String> {
+/// args from [`runner`]). Kept pure for testing. `projects` maps a run's
+/// configuration-option ids to Playwright project names (see [`project_map`]);
+/// options with no mapping are left to Playwright's default project(s).
+pub fn build_args(
+    plan: &RunPlan,
+    run: &Run,
+    headed: bool,
+    projects: &BTreeMap<String, String>,
+) -> Vec<String> {
     let mut args = vec!["test".to_string()];
     args.extend(plan.files.iter().cloned());
     if !plan.greps.is_empty() {
@@ -632,7 +657,9 @@ pub fn build_args(plan: &RunPlan, run: &Run, headed: bool) -> Vec<String> {
         args.push(pattern);
     }
     for cfg in &run.configuration {
-        args.push(format!("--project={cfg}"));
+        if let Some(project) = projects.get(cfg) {
+            args.push(format!("--project={project}"));
+        }
     }
     // Headed: show a real browser and run serially so it is watchable rather
     // than flashing many parallel windows.
@@ -716,7 +743,7 @@ pub fn execute<F: FnMut(&str)>(
     let _ = std::fs::remove_file(&report);
 
     let (program, lead) = runner(&paths.root);
-    let args = build_args(&plan, run, headed);
+    let args = build_args(&plan, run, headed, &project_map(paths));
     let target = load_target(paths);
     let target_env = target_env(&target);
     if let Some(url) = target.base_url.as_deref().filter(|u| !u.trim().is_empty()) {
@@ -970,17 +997,45 @@ mod tests {
             created: None,
             updated: None,
         };
-        let args = build_args(&plan, &run, false);
+        // The configuration option maps to the real Playwright project name.
+        let projects = BTreeMap::from([("chromium-desktop".to_string(), "chromium".to_string())]);
+        let args = build_args(&plan, &run, false, &projects);
         assert!(args.contains(&"tests/a.spec.ts".to_string()));
         assert!(!args.contains(&"--headed".to_string()));
         // Headed adds --headed and forces a single worker so it is watchable.
-        let headed = build_args(&plan, &run, true);
+        let headed = build_args(&plan, &run, true, &projects);
         assert!(headed.contains(&"--headed".to_string()));
         assert!(headed.contains(&"--workers=1".to_string()));
         let gi = args.iter().position(|a| a == "--grep").unwrap();
         assert_eq!(args[gi + 1], "(a \\(b\\))");
-        assert!(args.contains(&"--project=chromium-desktop".to_string()));
+        assert!(args.contains(&"--project=chromium".to_string()));
         assert!(args.contains(&"--reporter=line,json".to_string()));
+    }
+
+    #[test]
+    fn build_args_omits_project_when_option_is_unmapped() {
+        let plan = RunPlan {
+            cases: vec![],
+            skipped: vec![],
+            files: vec!["tests/a.spec.ts".into()],
+            greps: vec![],
+        };
+        let run = Run {
+            id: "r".into(),
+            name: "R".into(),
+            milestone: None,
+            configuration: vec!["chromium-desktop".into()],
+            description: None,
+            includes: Default::default(),
+            assignee: None,
+            state: Default::default(),
+            created: None,
+            updated: None,
+        };
+        // No mapping for the option: Playwright runs its default project(s), so
+        // no --project flag is emitted (rather than a bogus one Playwright rejects).
+        let args = build_args(&plan, &run, false, &BTreeMap::new());
+        assert!(!args.iter().any(|a| a.starts_with("--project=")));
     }
 
     #[test]

@@ -244,9 +244,24 @@ fn seed_runs(paths: &Paths) -> Result<()> {
             id: "browsers".into(),
             name: "Browsers".into(),
             options: vec![
-                ConfigOption { id: "chromium-desktop".into(), name: "Chromium · Desktop".into() },
-                ConfigOption { id: "firefox-desktop".into(), name: "Firefox · Desktop".into() },
-                ConfigOption { id: "webkit-mobile".into(), name: "WebKit · Mobile".into() },
+                // Only chromium-desktop maps to a Playwright project the sample
+                // config actually defines; the rest are reporting-only until the
+                // config grows matching projects.
+                ConfigOption {
+                    id: "chromium-desktop".into(),
+                    name: "Chromium · Desktop".into(),
+                    playwright_project: Some("chromium".into()),
+                },
+                ConfigOption {
+                    id: "firefox-desktop".into(),
+                    name: "Firefox · Desktop".into(),
+                    playwright_project: None,
+                },
+                ConfigOption {
+                    id: "webkit-mobile".into(),
+                    name: "WebKit · Mobile".into(),
+                    playwright_project: None,
+                },
             ],
         },
     )?;

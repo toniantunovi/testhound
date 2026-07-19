@@ -213,6 +213,10 @@ export interface Milestone {
 export interface ConfigOption {
   id: string;
   name: string;
+  /** The Playwright `--project` this option maps to, if any. Unmapped options
+   * run the config's default project(s) rather than passing `--project`.
+   * Snake_case to match the Rust struct's on-disk/IPC serialization. */
+  playwright_project?: string;
 }
 
 export interface Configuration {

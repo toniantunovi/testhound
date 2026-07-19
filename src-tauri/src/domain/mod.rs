@@ -226,6 +226,13 @@ pub struct Milestone {
 pub struct ConfigOption {
     pub id: String,
     pub name: String,
+    /// The Playwright `--project` this option maps to, if any. A configuration
+    /// option is a TestHound reporting dimension, not a Playwright project;
+    /// only when this is set does a run tagged with the option pass
+    /// `--project=<value>` to Playwright. Unmapped options run the config's
+    /// default project(s).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playwright_project: Option<String>,
 }
 
 /// A configuration group: `configurations/<id>.yml`.
