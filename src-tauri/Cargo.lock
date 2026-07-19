@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "testhound"
-version = "0.7.6"
+version = "0.7.7"
 dependencies = [
  "chrono",
  "git2",
