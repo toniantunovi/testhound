@@ -422,17 +422,31 @@ export function CaseEditor() {
                   </span>
                 </div>
                 {stepAwaiting ? (
-                  <p className="mb-2 font-mono text-[11px] leading-snug text-text-secondary">
-                    <span className="text-brand-accent">next:</span>{" "}
-                    {stepAwaiting.action}
-                    {stepAwaiting.target ? (
-                      <span className="text-text-muted"> {stepAwaiting.target}</span>
-                    ) : null}
-                  </p>
+                  stepAwaiting.action === "finish" ? (
+                    <p className="mb-2 text-[11px] leading-snug text-text-secondary">
+                      Review the final validated state in the browser, then
+                      finish to close it.
+                    </p>
+                  ) : (
+                    <p className="mb-2 font-mono text-[11px] leading-snug text-text-secondary">
+                      <span
+                        className={cn(
+                          stepAwaiting.action === "expect"
+                            ? "text-status-passed"
+                            : "text-brand-accent",
+                        )}
+                      >
+                        {stepAwaiting.action === "expect" ? "verify:" : "do:"}
+                      </span>{" "}
+                      {stepAwaiting.action === "expect"
+                        ? stepAwaiting.target
+                        : `${stepAwaiting.action} ${stepAwaiting.target}`.trim()}
+                    </p>
+                  )
                 ) : (
                   <p className="mb-2 flex items-center gap-1.5 text-[11px] text-text-muted">
                     <Loader2 size={11} className="animate-spin" />
-                    {stepStarting ? "Launching browser…" : "Running action…"}
+                    {stepStarting ? "Launching browser…" : "Running…"}
                   </p>
                 )}
                 <div className="flex gap-1.5">
@@ -441,21 +455,36 @@ export function CaseEditor() {
                     size="sm"
                     className="flex-1"
                     disabled={!stepAwaiting || stepNext.isPending}
-                    title="Run the next action, then pause again"
+                    title={
+                      stepAwaiting?.action === "finish"
+                        ? "Close the browser and finish"
+                        : "Run the next step, then pause again"
+                    }
                     onClick={() => stepNext.mutate()}
                   >
-                    <StepForward size={13} />
-                    Next step
+                    {stepAwaiting?.action === "finish" ? (
+                      <>
+                        <Check size={13} />
+                        Finish
+                      </>
+                    ) : (
+                      <>
+                        <StepForward size={13} />
+                        Next step
+                      </>
+                    )}
                   </Button>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={!stepAwaiting || stepRunToEnd.isPending}
-                    title="Run the rest without pausing"
-                    onClick={() => stepRunToEnd.mutate()}
-                  >
-                    <FastForward size={13} />
-                  </Button>
+                  {stepAwaiting?.action !== "finish" && (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={!stepAwaiting || stepRunToEnd.isPending}
+                      title="Run the rest without pausing (stops at the final state)"
+                      onClick={() => stepRunToEnd.mutate()}
+                    >
+                      <FastForward size={13} />
+                    </Button>
+                  )}
                   <Button
                     variant="secondary"
                     size="sm"

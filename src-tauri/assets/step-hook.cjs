@@ -61,6 +61,11 @@ function install(addr) {
   // internally; only the outermost call, initiated by the spec, should pause.
   let depth = 0;
   let counter = 0;
+  // Locator factories (getByTestId, getByRole, ...) delegate internally to
+  // `.locator(internalSelector)`. While inside a factory's own call we skip
+  // labelling those internal delegations so the semantic name wins, not the raw
+  // internal selector. The outermost factory patches the final result.
+  let inFactory = 0;
 
   function patch(obj, label) {
     if (!obj || typeof obj !== 'object' || obj.__thWrapped) return obj;
@@ -87,16 +92,73 @@ function install(addr) {
       if (typeof obj[name] !== 'function') continue;
       const orig = obj[name].bind(obj);
       obj[name] = function (...args) {
+        // An internal delegation from an outer factory: let that outer call
+        // patch and label the final locator with its semantic name.
+        if (inFactory > 0) return orig(...args);
         const childLabel = joinLabel(label, name, args);
-        return patch(orig(...args), childLabel);
+        inFactory += 1;
+        try {
+          return patch(orig(...args), childLabel);
+        } finally {
+          inFactory -= 1;
+        }
       };
     }
     try {
       Object.defineProperty(obj, '__thWrapped', { value: true });
+      Object.defineProperty(obj, '__thLabel', { value: label || '' });
     } catch (_) {
       /* ignore */
     }
     return obj;
+  }
+
+  // Gate web-first assertions the same way as actions, but only when the subject
+  // is a page/locator we wrapped. Those matchers return awaited promises, so
+  // turning them into gated promises preserves ordering and failure semantics;
+  // plain-value assertions (expect(2).toBe(2)) are synchronous and left alone.
+  const NON_MATCHERS = new Set(['not', 'resolves', 'rejects']);
+  function wrapMatchers(matchers, label, negated) {
+    return new Proxy(matchers, {
+      get(obj, prop, recv) {
+        const val = Reflect.get(obj, prop, recv);
+        if (typeof prop === 'symbol') return val;
+        if (NON_MATCHERS.has(prop)) {
+          return wrapMatchers(val, label, negated || prop === 'not');
+        }
+        if (typeof val !== 'function') return val;
+        return function (...args) {
+          if (depth > 0 || gate.done) return val.apply(obj, args);
+          depth += 1;
+          const name = negated ? `not.${prop}` : String(prop);
+          const step = {
+            i: (counter += 1),
+            action: 'expect',
+            target: describeAssert(label, name, args),
+          };
+          return gate
+            .wait(step)
+            .then(() => val.apply(obj, args))
+            .finally(() => {
+              depth -= 1;
+            });
+        };
+      },
+    });
+  }
+
+  if (typeof pw.expect === 'function') {
+    const origExpect = pw.expect;
+    const wrapped = function (subject, ...rest) {
+      const matchers = origExpect(subject, ...rest);
+      if (subject && typeof subject === 'object' && subject.__thWrapped) {
+        return wrapMatchers(matchers, subject.__thLabel || '', false);
+      }
+      return matchers;
+    };
+    // Preserve expect.soft / poll / configure / extend / any / ... verbatim.
+    Object.assign(wrapped, origExpect);
+    pw.expect = wrapped;
   }
 
   const extended = pw.test.extend({
@@ -106,7 +168,22 @@ function install(addr) {
       } catch (err) {
         warn(err && err.message);
       }
-      await use(page);
+      try {
+        await use(page);
+      } finally {
+        // Hold on the final (validated, or failed) state until the user
+        // advances, so the browser does not close before they can see it.
+        if (!gate.done) {
+          await gate.wait(
+            {
+              i: (counter += 1),
+              action: 'finish',
+              target: 'review the final state, then finish',
+            },
+            true,
+          );
+        }
+      }
     },
   });
 
@@ -139,6 +216,14 @@ function joinLabel(parent, factory, args) {
   const inner = [arg, opt].filter(Boolean).join(', ');
   const seg = `${factory}(${inner})`;
   return parent && parent !== 'page' ? `${parent} › ${seg}` : seg;
+}
+
+// Human-readable "what is being validated" for an assertion step, e.g.
+// "getByTestId(cart-badge) toHaveText 1".
+function describeAssert(label, matcher, args) {
+  const subject = label || 'value';
+  const expected = args.length ? preview(args[0]) : '';
+  return [subject, matcher, expected].filter(Boolean).join(' ');
 }
 
 // Human-readable "what is about to happen" for an action step.
@@ -174,7 +259,10 @@ function createGate(addr) {
   const host = addr.slice(0, colon) || '127.0.0.1';
   const port = Number(addr.slice(colon + 1));
 
-  const gate = { done: false };
+  // `done` is terminal (socket lost or run stopped): every wait resolves.
+  // `resumed` means "run to the end without pausing", but the final finish step
+  // is forced and still pauses so the validated end state stays on screen.
+  const gate = { done: false, resumed: false };
   let socket = null;
   let pending = null;
   let buffer = '';
@@ -209,7 +297,8 @@ function createGate(addr) {
           continue;
         }
         if (msg.t === 'resume') {
-          finish();
+          gate.resumed = true;
+          release();
         } else if (msg.t === 'go') {
           release();
         }
@@ -219,9 +308,11 @@ function createGate(addr) {
     socket.on('close', finish);
   };
 
-  gate.wait = (step) =>
+  // `force` (used by the final finish step) pauses even after "resume".
+  gate.wait = (step, force) =>
     new Promise((resolve) => {
       if (gate.done) return resolve();
+      if (gate.resumed && !force) return resolve();
       connect();
       pending = resolve;
       try {
