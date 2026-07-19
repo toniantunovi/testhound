@@ -36,6 +36,7 @@ import type {
   RunStartedEvent,
   RunSummary,
   Side,
+  StepBeginEvent,
   SuiteTree,
   SyncOutcome,
   TestCase,
@@ -169,6 +170,12 @@ export const api = {
     invoke<void>("run_playwright", { runId, headed }),
   runCaseSpec: (caseId: string, headed: boolean) =>
     invoke<void>("run_case_spec", { caseId, headed }),
+  // Step-through preview: pauses before each action until the user advances.
+  runCaseSpecStepped: (caseId: string) =>
+    invoke<void>("run_case_spec_stepped", { caseId }),
+  stepAdvance: () => invoke<void>("step_advance"),
+  stepResume: () => invoke<void>("step_resume"),
+  stepStop: () => invoke<void>("step_stop"),
   openTrace: (path: string) => invoke<void>("open_trace", { path }),
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   openInEditor: (path: string) => invoke<void>("open_in_editor", { path }),
@@ -259,6 +266,14 @@ export const runEvents = {
     listen<RunProgressEvent>("run://progress", (e) => cb(e.payload)),
   onFinished: (cb: (e: RunFinishedEvent) => void): Promise<UnlistenFn> =>
     listen<RunFinishedEvent>("run://finished", (e) => cb(e.payload)),
+};
+
+// ---- Step-through preview events ---------------------------------------------
+// Emitted once per paused action during a stepped case preview.
+
+export const stepEvents = {
+  onBegin: (cb: (e: StepBeginEvent) => void): Promise<UnlistenFn> =>
+    listen<StepBeginEvent>("step://begin", (e) => cb(e.payload)),
 };
 
 // ---- Agent lifecycle events --------------------------------------------------

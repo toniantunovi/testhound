@@ -1,11 +1,12 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { UnlistenFn } from "@tauri-apps/api/event";
-import { runEvents } from "@/lib/ipc";
+import { runEvents, stepEvents } from "@/lib/ipc";
 import { track } from "@/lib/telemetry";
 import type { PlaywrightSummary } from "@/lib/types";
 import { useActivity } from "@/store/activity";
 import { useSession } from "@/store/session";
+import { useStep } from "@/store/step";
 
 /** One short line describing how a run finished, for the collapsed bar. */
 function summarize(s: PlaywrightSummary): string {
@@ -52,8 +53,10 @@ export function useRunEvents() {
         push(`  ${e.case}: ${e.status}${el}`);
       }),
     );
+    register(stepEvents.onBegin((e) => useStep.getState().onStep(e)));
     register(
       runEvents.onFinished((e) => {
+        useStep.getState().finish(e.runId);
         if (e.error) {
           push(`x Run failed: ${e.error}`);
           finish(e.error);

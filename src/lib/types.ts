@@ -270,6 +270,16 @@ export interface RunFinishedEvent {
   error: string | null;
 }
 
+export interface StepBeginEvent {
+  runId: string;
+  /** 1-based index of this action within the stepped preview. */
+  index: number;
+  /** The Playwright action about to run (e.g. "click", "goto", "fill"). */
+  action: string;
+  /** Human-readable target (selector/url/value); may be empty. */
+  target: string;
+}
+
 // ---- AI automation (M4) ------------------------------------------------------
 
 export interface AgentAvailability {

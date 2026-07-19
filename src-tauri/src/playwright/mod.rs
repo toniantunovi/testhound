@@ -888,6 +888,97 @@ pub fn run_spec_preview<F: FnMut(&str)>(
     Ok(())
 }
 
+// ---- stepped (human-paced) preview --------------------------------------------
+
+/// Everything needed to spawn a step-through preview: the resolved command plus
+/// the extra environment that loads the step hook. The caller adds the socket
+/// address (`TESTHOUND_STEP_ADDR`) once it has bound a listener, then spawns.
+#[derive(Debug, Clone)]
+pub struct PreparedRun {
+    pub program: String,
+    pub lead: Vec<String>,
+    pub args: Vec<String>,
+    /// Base URL / custom vars plus `NODE_OPTIONS` wired to `--require` the hook.
+    pub env: Vec<(String, String)>,
+    pub cwd: PathBuf,
+}
+
+/// Write the bundled step hook into the gitignored cache and return its path.
+/// Uses a `.cjs` extension so it loads as CommonJS even in an ESM project.
+fn write_step_hook(paths: &Paths) -> Result<PathBuf> {
+    const HOOK: &str = include_str!("../../assets/step-hook.cjs");
+    let path = paths
+        .th
+        .join(".testhound")
+        .join("cache")
+        .join("step-hook.cjs");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, HOOK)?;
+    Ok(path)
+}
+
+/// Resolve a case's linked spec(s) into a headed, single-worker command whose
+/// actions pause for a human. Timeouts are disabled (`--timeout=0`) because the
+/// person, not the clock, decides when each step runs. The step hook is loaded
+/// via `NODE_OPTIONS`, so it applies to Playwright's worker process too.
+pub fn prepare_stepped(paths: &Paths, specs: &[String]) -> Result<PreparedRun> {
+    let pw = detect(&paths.root);
+    if !pw.detected {
+        return Err(Error::Playwright(
+            "no playwright.config found in the repo root".into(),
+        ));
+    }
+    let refs: Vec<SpecRef> = specs.iter().map(|s| parse_spec_ref(s)).collect();
+    let files: BTreeSet<String> = refs.iter().map(|r| r.file.clone()).collect();
+    if files.is_empty() {
+        return Err(Error::Playwright(
+            "this case has no linked spec to run".into(),
+        ));
+    }
+    validate_spec_files(paths, &pw, &files)?;
+    let greps: Vec<String> = refs.iter().filter_map(|r| r.test.clone()).collect();
+
+    let hook = write_step_hook(paths)?;
+
+    let mut args = vec!["test".to_string()];
+    args.extend(files.iter().cloned());
+    if !greps.is_empty() {
+        let pattern = greps
+            .iter()
+            .map(|t| format!("({})", regex_escape(t)))
+            .collect::<Vec<_>>()
+            .join("|");
+        args.push("--grep".to_string());
+        args.push(pattern);
+    }
+    args.push("--headed".to_string());
+    args.push("--workers=1".to_string());
+    args.push("--timeout=0".to_string());
+    args.push("--reporter=line".to_string());
+
+    let (program, lead) = runner(&paths.root);
+    let target = load_target(paths);
+    let mut env = target_env(&target);
+    // Preserve any inherited NODE_OPTIONS, then append our preload. Quote the
+    // path so a repo checkout under a directory with spaces still parses.
+    let mut node_opts = std::env::var("NODE_OPTIONS").unwrap_or_default();
+    if !node_opts.trim().is_empty() {
+        node_opts.push(' ');
+    }
+    node_opts.push_str(&format!("--require \"{}\"", hook.display()));
+    env.push(("NODE_OPTIONS".to_string(), node_opts));
+
+    Ok(PreparedRun {
+        program,
+        lead,
+        args,
+        env,
+        cwd: paths.root.clone(),
+    })
+}
+
 /// Open a trace in the Playwright trace viewer (`playwright show-trace`). The
 /// trace path is validated to live inside the repo before launching.
 pub fn show_trace(paths: &Paths, trace: &str) -> Result<()> {

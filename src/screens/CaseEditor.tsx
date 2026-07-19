@@ -4,6 +4,8 @@ import { ask } from "@tauri-apps/plugin-dialog";
 import {
   ArrowLeft,
   Check,
+  FastForward,
+  Footprints,
   GitBranch,
   History,
   Loader2,
@@ -11,6 +13,8 @@ import {
   Plus,
   Save,
   Sparkles,
+  Square,
+  StepForward,
   Trash2,
   X,
 } from "lucide-react";
@@ -23,6 +27,7 @@ import type {
 } from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useAssistant } from "@/store/assistant";
+import { useStep } from "@/store/step";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { AutomationBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -89,6 +94,41 @@ export function CaseEditor() {
   // creating a run. Output streams to the Activity console.
   const runSpec = useMutation({
     mutationFn: (caseId: string) => api.runCaseSpec(caseId, true),
+    onError: (e) => window.alert(errMsg(e)),
+  });
+
+  // Step-through preview: the browser pauses before each action until the user
+  // advances it, so they can confirm the test does the right thing.
+  const stepBegin = useStep((s) => s.begin);
+  const stepClear = useStep((s) => s.clearAwaiting);
+  const stepActiveCaseId = useStep((s) => s.caseId);
+  const stepAwaiting = useStep((s) => s.awaiting);
+  const stepList = useStep((s) => s.steps);
+  const stepStarting = useStep((s) => s.starting);
+  // This case's session is the active one only when the ids match.
+  const stepping = stepActiveCaseId === draft?.id ? stepActiveCaseId : null;
+
+  const startStep = useMutation({
+    mutationFn: (caseId: string) => api.runCaseSpecStepped(caseId),
+    onMutate: (caseId: string) => stepBegin(caseId),
+    onError: (e) => {
+      // Launch failed: drop back to idle and surface why.
+      useStep.getState().finish(`step:${draft?.id}`);
+      window.alert(errMsg(e));
+    },
+  });
+  const stepNext = useMutation({
+    mutationFn: () => api.stepAdvance(),
+    onMutate: () => stepClear(),
+    onError: (e) => window.alert(errMsg(e)),
+  });
+  const stepRunToEnd = useMutation({
+    mutationFn: () => api.stepResume(),
+    onMutate: () => stepClear(),
+    onError: (e) => window.alert(errMsg(e)),
+  });
+  const stepStop = useMutation({
+    mutationFn: () => api.stepStop(),
     onError: (e) => window.alert(errMsg(e)),
   });
 
@@ -345,6 +385,87 @@ export function CaseEditor() {
                   </>
                 )}
               </Button>
+            )}
+            {draft.automation.specs &&
+              draft.automation.specs.length > 0 &&
+              !stepping && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mb-2 w-full"
+                  disabled={
+                    startStep.isPending ||
+                    pwInitializing ||
+                    // Another case is mid-session; finish it first.
+                    (stepActiveCaseId !== null && stepActiveCaseId !== draft.id)
+                  }
+                  title={
+                    pw?.detected
+                      ? "Step through each action in a visible browser, advancing one at a time"
+                      : "Playwright is not set up in this repo. Click to initialize it, then step through."
+                  }
+                  onClick={() =>
+                    pw?.detected ? startStep.mutate(draft.id) : openPwSetup()
+                  }
+                >
+                  <Footprints size={13} className="text-brand-accent" />
+                  Step through
+                </Button>
+              )}
+            {stepping && (
+              <div className="mb-2 rounded-control border border-brand-accent/30 bg-bg-surface-2 p-2.5">
+                <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-text-primary">
+                  <Footprints size={12} className="text-brand-accent" />
+                  Stepping through
+                  <span className="ml-auto font-mono text-text-muted">
+                    {stepList.length > 0 ? `#${stepList.length}` : ""}
+                  </span>
+                </div>
+                {stepAwaiting ? (
+                  <p className="mb-2 font-mono text-[11px] leading-snug text-text-secondary">
+                    <span className="text-brand-accent">next:</span>{" "}
+                    {stepAwaiting.action}
+                    {stepAwaiting.target ? (
+                      <span className="text-text-muted"> {stepAwaiting.target}</span>
+                    ) : null}
+                  </p>
+                ) : (
+                  <p className="mb-2 flex items-center gap-1.5 text-[11px] text-text-muted">
+                    <Loader2 size={11} className="animate-spin" />
+                    {stepStarting ? "Launching browser…" : "Running action…"}
+                  </p>
+                )}
+                <div className="flex gap-1.5">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="flex-1"
+                    disabled={!stepAwaiting || stepNext.isPending}
+                    title="Run the next action, then pause again"
+                    onClick={() => stepNext.mutate()}
+                  >
+                    <StepForward size={13} />
+                    Next step
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!stepAwaiting || stepRunToEnd.isPending}
+                    title="Run the rest without pausing"
+                    onClick={() => stepRunToEnd.mutate()}
+                  >
+                    <FastForward size={13} />
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    title="Stop and close the browser"
+                    onClick={() => stepStop.mutate()}
+                  >
+                    <Square size={13} className="text-status-failed" />
+                  </Button>
+                </div>
+              </div>
             )}
             <Button
               variant="secondary"

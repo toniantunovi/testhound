@@ -40,6 +40,16 @@ pub struct AppState {
     /// The assistant's currently-running agent child, if any, so it can be
     /// stopped mid-run. Only one assistant turn runs at a time.
     pub assistant_child: Arc<Mutex<Option<Child>>>,
+    /// The active step-through preview session, if any. Only one runs at a time;
+    /// starting a new one supersedes it.
+    pub step: Arc<Mutex<Option<StepSession>>>,
+}
+
+/// A live step-through preview: the socket back to the paused Playwright worker
+/// (write "go"/"resume") and a handle to the child so it can be killed on stop.
+pub struct StepSession {
+    writer: std::net::TcpStream,
+    child: Arc<Mutex<Child>>,
 }
 
 impl AppState {
@@ -742,6 +752,277 @@ pub fn run_case_spec(
     });
 
     Ok(())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StepBeginEvent {
+    run_id: String,
+    /// 1-based index of this action within the run.
+    index: u32,
+    /// The Playwright action about to run (e.g. `click`, `goto`, `fill`).
+    action: String,
+    /// A human-readable target (selector/url/value), possibly empty.
+    target: String,
+}
+
+/// Run a case's linked spec in a headed browser that pauses before each action
+/// until the user advances it, so they can verify the test does the right thing.
+/// Streams `run://*` for output plus `step://begin` for each pause. Advance with
+/// [`step_advance`], skip to the end with [`step_resume`], or [`step_stop`].
+#[tauri::command]
+pub fn run_case_spec_stepped(
+    case_id: String,
+    app: AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    let paths = state.paths()?;
+    let case = repo::load_case(&paths, &case_id)?;
+    let specs = case.front.automation.specs.clone();
+    if specs.is_empty() {
+        return Err(Error::Playwright(format!(
+            "{case_id} has no linked spec to run"
+        )));
+    }
+    // Resolve the command (and fail fast on a bad spec) before announcing a run.
+    let prepared = playwright::prepare_stepped(&paths, &specs)?;
+
+    // Supersede any prior session so a stale paused worker cannot linger.
+    if let Some(prev) = state.step.lock().unwrap().take() {
+        let _ = (&prev.writer).write_all(b"{\"t\":\"resume\"}\n");
+        if let Ok(mut child) = prev.child.lock() {
+            let _ = child.kill();
+        }
+    }
+
+    // Bind before spawning so the worker's lazy connect always finds us.
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| Error::Playwright(format!("could not open step channel: {e}")))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| Error::Playwright(format!("could not read step channel: {e}")))?
+        .port();
+
+    let run_id = format!("step:{case_id}");
+    let _ = app.emit(
+        "run://started",
+        StartedEvent {
+            run_id: run_id.clone(),
+            cases: 1,
+        },
+    );
+
+    let step_slot = state.step.clone();
+    std::thread::spawn(move || {
+        let emit_log = |line: &str| {
+            let _ = app.emit(
+                "run://log",
+                LogEvent {
+                    run_id: run_id.clone(),
+                    line: line.to_string(),
+                },
+            );
+        };
+        emit_log(&format!(
+            "$ {} {} {}",
+            prepared.program,
+            prepared.lead.join(" "),
+            prepared.args.join(" ")
+        ));
+
+        let mut cmd = std::process::Command::new(&prepared.program);
+        cmd.args(&prepared.lead)
+            .args(&prepared.args)
+            .current_dir(&prepared.cwd)
+            .env("FORCE_COLOR", "0")
+            .env("TESTHOUND_STEP_ADDR", format!("127.0.0.1:{port}"))
+            .envs(prepared.env.clone())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        let mut spawned = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                let msg = format!("failed to launch {}: {e}", prepared.program);
+                emit_log(&format!("error: {msg}"));
+                let _ = app.emit(
+                    "run://finished",
+                    FinishedEvent {
+                        run_id: run_id.clone(),
+                        summary: None,
+                        error: Some(msg),
+                    },
+                );
+                return;
+            }
+        };
+
+        // Stream stdout and stderr on their own threads so neither can deadlock.
+        let stdout = spawned.stdout.take();
+        let stderr = spawned.stderr.take();
+        let child = Arc::new(Mutex::new(spawned));
+
+        let out_app = app.clone();
+        let out_id = run_id.clone();
+        let out_handle = stdout.map(|out| {
+            std::thread::spawn(move || {
+                for line in BufReader::new(out).lines().map_while(std::result::Result::ok) {
+                    let _ = out_app.emit(
+                        "run://log",
+                        LogEvent {
+                            run_id: out_id.clone(),
+                            line,
+                        },
+                    );
+                }
+            })
+        });
+        let err_app = app.clone();
+        let err_id = run_id.clone();
+        let err_handle = stderr.map(|err| {
+            std::thread::spawn(move || {
+                for line in BufReader::new(err).lines().map_while(std::result::Result::ok) {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let _ = err_app.emit(
+                        "run://log",
+                        LogEvent {
+                            run_id: err_id.clone(),
+                            line,
+                        },
+                    );
+                }
+            })
+        });
+
+        // Wait for the worker to connect, but give up if the run ends first
+        // (e.g. a spec with no actions, or an early crash).
+        let _ = listener.set_nonblocking(true);
+        let stream = loop {
+            match listener.accept() {
+                Ok((s, _)) => break Some(s),
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if matches!(child.lock().unwrap().try_wait(), Ok(Some(_))) {
+                        break None;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => break None,
+            }
+        };
+
+        if let Some(stream) = stream {
+            let _ = stream.set_nonblocking(false);
+            if let Ok(writer) = stream.try_clone() {
+                *step_slot.lock().unwrap() = Some(StepSession {
+                    writer,
+                    child: child.clone(),
+                });
+                emit_log("Stepping: click \"Next step\" to run each action.");
+                for line in BufReader::new(stream).lines().map_while(std::result::Result::ok) {
+                    let msg: serde_json::Value = match serde_json::from_str(&line) {
+                        Ok(v) => v,
+                        Err(_) => continue,
+                    };
+                    if msg.get("t").and_then(|t| t.as_str()) == Some("step") {
+                        let _ = app.emit(
+                            "step://begin",
+                            StepBeginEvent {
+                                run_id: run_id.clone(),
+                                index: msg.get("i").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                                action: msg
+                                    .get("action")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                target: msg
+                                    .get("target")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        // The socket closed (worker finished or was resumed to the end). Reap the
+        // process and drain the output threads before reporting completion.
+        let status = child.lock().unwrap().wait();
+        if let Some(h) = out_handle {
+            let _ = h.join();
+        }
+        if let Some(h) = err_handle {
+            let _ = h.join();
+        }
+        *step_slot.lock().unwrap() = None;
+
+        let error = match status {
+            Ok(_) => {
+                emit_log("Preview finished.");
+                None
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                emit_log(&format!("error: {msg}"));
+                Some(msg)
+            }
+        };
+        let _ = app.emit(
+            "run://finished",
+            FinishedEvent {
+                run_id: run_id.clone(),
+                summary: None,
+                error,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+/// Advance a paused step-through preview by one action.
+#[tauri::command]
+pub fn step_advance(state: tauri::State<AppState>) -> Result<()> {
+    send_step_signal(&state, b"{\"t\":\"go\"}\n")
+}
+
+/// Let a step-through preview run to the end without further pauses.
+#[tauri::command]
+pub fn step_resume(state: tauri::State<AppState>) -> Result<()> {
+    send_step_signal(&state, b"{\"t\":\"resume\"}\n")
+}
+
+/// Stop a step-through preview: unblock the worker, then kill it.
+#[tauri::command]
+pub fn step_stop(state: tauri::State<AppState>) -> Result<()> {
+    use std::io::Write;
+    if let Some(session) = state.step.lock().unwrap().take() {
+        let _ = (&session.writer).write_all(b"{\"t\":\"resume\"}\n");
+        if let Ok(mut child) = session.child.lock() {
+            let _ = child.kill();
+        }
+    }
+    Ok(())
+}
+
+fn send_step_signal(state: &tauri::State<AppState>, msg: &[u8]) -> Result<()> {
+    use std::io::Write;
+    let guard = state.step.lock().unwrap();
+    match guard.as_ref() {
+        Some(session) => {
+            (&session.writer)
+                .write_all(msg)
+                .map_err(|e| Error::Playwright(format!("step channel closed: {e}")))?;
+            Ok(())
+        }
+        None => Err(Error::Playwright("no step-through preview is running".into())),
+    }
 }
 
 /// Open a Playwright trace artifact in the trace viewer.
