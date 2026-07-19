@@ -41,6 +41,8 @@ const REFRESH_KEYS = [
   "git-status",
   "conflicts",
   "playwright-info",
+  "test-target",
+  "automation-setup",
 ];
 
 function newTurnId(): string {

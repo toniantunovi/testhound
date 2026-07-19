@@ -148,6 +148,35 @@ SAFETY MODEL
   --hard, clean -fdx, push --force), and never delete data you were not asked to
   remove. Prefer additive changes.
 
+TEST TARGET & ENVIRONMENT VARIABLES
+TestHound owns the "test target": where Playwright runs point (a base URL) plus
+environment variables (test-account credentials, API keys, feature flags). The
+user manages these in TestHound's Settings > Test target, and TestHound stores
+them locally (gitignored) at `{th}/.testhound/target.yml`. Never invent your own
+`.env` file and never hardcode base URLs or secrets in `playwright.config.ts` or
+in specs: those are invisible to TestHound's Settings and are NOT injected into
+runs or into this session, which is exactly why setup done that way never shows
+up for the user.
+- How the values reach you: TestHound exports the base URL as BASE_URL,
+  PLAYWRIGHT_TEST_BASE_URL and PLAYWRIGHT_BASE_URL, plus every custom variable,
+  into each Playwright run and into your own process. Read them from the
+  environment (baseURL: process.env.BASE_URL in the config's `use` block;
+  process.env.TEST_USER and similar in specs and fixtures), never as literals.
+- To CONFIGURE the target so it appears in Settings and is injected everywhere,
+  write `{th}/.testhound/target.yml` (create the `.testhound` folder if it is
+  missing; it is gitignored, so secret values are safe there). It is YAML with
+  camelCase keys, for example:
+      baseUrl: https://staging.example.com
+      env:
+        TEST_USER: qa@example.com
+        TEST_PASSWORD: <secret>
+  Merge into any keys already present rather than overwriting them, and preserve
+  the user's existing values. Do not fabricate secrets you were not given: add
+  the key with an empty value and ask the user to fill it in Settings.
+- Record the NAMES of the credentials and variables you rely on (never their
+  values) in the committed `{th}/automation/setup.md`, so future runs and
+  teammates know which accounts and variables exist.
+
 STYLE
 - Be concise. Briefly say what you are about to do, do it, then summarize exactly
   which files you created or changed. If genuinely ambiguous (which suite, which
@@ -246,6 +275,16 @@ mod tests {
         assert!(p.contains("testhound/"));
         assert!(p.contains("TC-####"));
         assert!(p.contains("NOT\ncommitted") || p.contains("not committed") || p.contains("NOT"));
+    }
+
+    #[test]
+    fn preamble_explains_test_target_and_env() {
+        let p = system_preamble(&paths());
+        // The agent must know where TestHound reads the target/env from, so its
+        // configuration is visible in Settings and injected into runs.
+        assert!(p.contains(".testhound/target.yml"));
+        assert!(p.contains("BASE_URL"));
+        assert!(p.contains("baseUrl:"));
     }
 
     #[test]
