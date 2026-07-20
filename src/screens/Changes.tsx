@@ -125,7 +125,7 @@ export function Changes() {
   return (
     <div className="flex h-full min-h-0">
       {/* Changes list */}
-      <div className="flex w-[420px] shrink-0 flex-col border-r border-border-subtle">
+      <div className="flex w-72 shrink-0 flex-col border-r border-border-subtle xl:w-[420px]">
         <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
           <h1 className="flex items-center gap-2 text-sm font-semibold">
             Changes

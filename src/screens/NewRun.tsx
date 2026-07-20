@@ -131,7 +131,7 @@ export function NewRun() {
               />
             </Field>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Milestone">
                 <select
                   value={milestone}
@@ -186,7 +186,7 @@ export function NewRun() {
             </Field>
 
             <Field label="Include">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {MODES.map((m) => (
                   <button
                     key={m.id}
@@ -277,7 +277,7 @@ export function NewRun() {
         </div>
 
         {/* Preview */}
-        <aside className="w-80 shrink-0 overflow-auto border-l border-border-subtle bg-bg-surface/50 p-4">
+        <aside className="w-64 shrink-0 overflow-auto border-l border-border-subtle bg-bg-surface/50 p-4 xl:w-80">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
               Included cases

@@ -141,23 +141,23 @@ export function RepoBar() {
   return (
     <header
       data-tauri-drag-region
-      className="th-drag flex h-11 shrink-0 items-center gap-3 border-b border-border-subtle bg-bg-surface px-3 pl-20"
+      className="th-drag flex h-11 shrink-0 items-center gap-3 overflow-hidden border-b border-border-subtle bg-bg-surface px-3 pl-20"
     >
       {/* Brand */}
-      <div data-tauri-drag-region className="flex items-center gap-2">
+      <div data-tauri-drag-region className="flex shrink-0 items-center gap-2">
         <span className="h-2.5 w-2.5 rounded-full bg-brand-primary shadow-[0_0_8px_rgba(110,139,255,0.7)]" />
         <span className="text-sm font-semibold tracking-tight">TestHound</span>
       </div>
 
       {/* Project switcher */}
-      <div className="relative th-no-drag">
+      <div className="relative min-w-0 th-no-drag">
         <button
           onClick={() => setProjectMenuOpen((o) => !o)}
           title="Open another project or close this one"
-          className="flex items-center gap-1 rounded-control px-2 py-1 text-sm text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+          className="flex min-w-0 max-w-[12rem] items-center gap-1 rounded-control px-2 py-1 text-sm text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
         >
-          {project?.name ?? "No project"}
-          <ChevronDown size={13} className="text-text-muted" />
+          <span className="truncate">{project?.name ?? "No project"}</span>
+          <ChevronDown size={13} className="shrink-0 text-text-muted" />
         </button>
         {projectMenuOpen && (
           <>
@@ -189,16 +189,16 @@ export function RepoBar() {
       </div>
 
       {/* Branch selector */}
-      <div className="relative th-no-drag">
+      <div className="relative shrink-0 th-no-drag">
         <button
           onClick={() => setBranchOpen((o) => !o)}
-          className="flex items-center gap-1.5 rounded-control border border-border-subtle bg-bg-surface-2 px-2 py-1 text-xs hover:border-border-strong"
+          className="flex max-w-[12rem] items-center gap-1.5 rounded-control border border-border-subtle bg-bg-surface-2 px-2 py-1 text-xs hover:border-border-strong"
         >
-          <GitBranch size={12} className="text-brand-accent" />
-          <span className="font-mono text-text-primary">
+          <GitBranch size={12} className="shrink-0 text-brand-accent" />
+          <span className="truncate font-mono text-text-primary">
             {git?.branch ?? project?.branch ?? "-"}
           </span>
-          <ChevronDown size={12} className="text-text-muted" />
+          <ChevronDown size={12} className="shrink-0 text-text-muted" />
         </button>
         {branchOpen && (
           <>
@@ -272,7 +272,7 @@ export function RepoBar() {
 
       {/* Ahead / behind */}
       {git && (git.ahead > 0 || git.behind > 0) && (
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
+        <div className="flex shrink-0 items-center gap-2 text-xs text-text-secondary">
           <span className="flex items-center gap-0.5">
             <ArrowUp size={11} />
             {git.ahead}
@@ -289,7 +289,7 @@ export function RepoBar() {
         <button
           onClick={() => navigate("changes")}
           title={`${changeCount} uncommitted change(s)`}
-          className="th-no-drag flex items-center gap-1.5 rounded-control px-1.5 py-1 text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
+          className="th-no-drag flex shrink-0 items-center gap-1.5 rounded-control px-1.5 py-1 text-xs text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-status-drifted" />
           {changeCount}
@@ -302,7 +302,7 @@ export function RepoBar() {
         <button
           onClick={() => navigate("merge")}
           title="Resolve merge conflicts"
-          className="th-no-drag flex items-center gap-1.5 rounded-control border border-status-failed/30 bg-status-failed/10 px-2 py-1 text-xs font-medium text-status-failed hover:bg-status-failed/20"
+          className="th-no-drag flex shrink-0 items-center gap-1.5 rounded-control border border-status-failed/30 bg-status-failed/10 px-2 py-1 text-xs font-medium text-status-failed hover:bg-status-failed/20"
         >
           <GitMerge size={12} />
           {conflictCount > 0
@@ -317,7 +317,7 @@ export function RepoBar() {
       <button
         onClick={togglePalette}
         title="Open the command palette"
-        className="th-no-drag flex items-center gap-2 rounded-control border border-border-subtle bg-bg-base px-2.5 py-1 text-xs text-text-muted hover:border-border-strong"
+        className="th-no-drag flex shrink-0 items-center gap-2 rounded-control border border-border-subtle bg-bg-base px-2.5 py-1 text-xs text-text-muted hover:border-border-strong"
       >
         <Command size={12} />
         <span>Commands</span>
@@ -331,7 +331,7 @@ export function RepoBar() {
         onClick={toggleAssistant}
         title="Toggle assistant (⌘J)"
         className={cn(
-          "th-no-drag flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs font-medium transition-colors",
+          "th-no-drag flex shrink-0 items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs font-medium transition-colors",
           assistantOpen
             ? "border-brand-accent/40 bg-brand-accent/10 text-brand-accent"
             : "border-border-subtle text-text-secondary hover:border-border-strong hover:text-text-primary",
@@ -346,7 +346,7 @@ export function RepoBar() {
         onClick={syncFlow.sync}
         disabled={syncFlow.pending}
         className={cn(
-          "th-no-drag flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs font-medium",
+          "th-no-drag flex shrink-0 items-center gap-1.5 rounded-control px-2.5 py-1 text-xs font-medium",
           "bg-brand-primary text-bg-base hover:bg-brand-primary/90 disabled:opacity-60",
         )}
       >

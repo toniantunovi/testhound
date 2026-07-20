@@ -82,7 +82,7 @@ export function Automation() {
 
       {/* Metrics */}
       {cov && (
-        <div className="grid grid-cols-5 gap-px border-b border-border-subtle bg-border-subtle">
+        <div className="grid grid-cols-2 gap-px border-b border-border-subtle bg-border-subtle md:grid-cols-3 xl:grid-cols-5">
           <Metric
             label="Coverage"
             value={`${cov.coveragePct}%`}
@@ -105,7 +105,7 @@ export function Automation() {
       )}
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border-subtle px-6 py-2">
+      <div className="flex flex-wrap items-center gap-1 border-b border-border-subtle px-6 py-2">
         {TABS.map((t) => {
           const count = tabCount(cov, t.id);
           return (
@@ -113,7 +113,7 @@ export function Automation() {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                "flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs transition-colors",
+                "flex shrink-0 items-center gap-1.5 rounded-control px-2.5 py-1 text-xs transition-colors",
                 tab === t.id
                   ? "bg-bg-surface-2 text-text-primary"
                   : "text-text-secondary hover:bg-bg-surface-2/60 hover:text-text-primary",
@@ -145,9 +145,9 @@ export function Automation() {
             Nothing here. {tab === "drifted" ? "No specs have drifted." : ""}
           </div>
         ) : (
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full min-w-[760px] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-bg-base">
-              <tr className="border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+              <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
                 <th className="w-24 py-2 pl-6 font-medium">ID</th>
                 <th className="py-2 font-medium">Case</th>
                 <th className="w-28 py-2 font-medium">Priority</th>
@@ -168,10 +168,11 @@ export function Automation() {
                   <td className="py-3 pl-6 font-mono text-xs text-brand-primary">
                     <button onClick={() => openCase(row.case)}>{row.case}</button>
                   </td>
-                  <td className="py-3 pr-4">
+                  <td className="max-w-[32rem] py-3 pr-4">
                     <button
                       onClick={() => openCase(row.case)}
-                      className="text-left text-text-primary hover:underline"
+                      title={row.title}
+                      className="block max-w-full truncate text-left text-text-primary hover:underline"
                     >
                       {row.title}
                     </button>
@@ -179,12 +180,12 @@ export function Automation() {
                       {row.specs.map((s) => (
                         <button
                           key={s}
-                          title="View and edit the spec code"
+                          title={s}
                           onClick={() => setOpenSpecPath(s.split("#")[0])}
-                          className="flex items-center gap-1.5 rounded-control font-mono text-[11px] text-text-muted hover:text-text-primary hover:underline"
+                          className="flex max-w-full items-center gap-1.5 rounded-control font-mono text-[11px] text-text-muted hover:text-text-primary hover:underline"
                         >
-                          <FileCode size={10} className="text-brand-accent" />
-                          {s}
+                          <FileCode size={10} className="shrink-0 text-brand-accent" />
+                          <span className="truncate">{s}</span>
                         </button>
                       ))}
                     </div>

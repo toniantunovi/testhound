@@ -160,7 +160,7 @@ export function Reports() {
       <Header subtitle={project?.name} />
       <div className="min-h-0 flex-1 overflow-auto p-8">
         {/* KPIs */}
-        <div className="mb-6 grid grid-cols-4 gap-4">
+        <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
           <Kpi label="Runs recorded" value={runs.length} hint={`${executedTotal} case executions`} />
           <Kpi
             label="Overall pass rate"
@@ -188,25 +188,29 @@ export function Reports() {
           <PassRateTimeline points={timeline} onOpen={openRun} />
         </Card>
 
-        <div className="mt-4 grid grid-cols-[1.4fr_1fr] gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
           {/* Per-suite health */}
           <Card title="Suite health" subtitle="Automation coverage and recorded pass rate per suite">
             {suites.length === 0 ? (
               <p className="text-sm text-text-muted">No suites yet.</p>
             ) : (
-              <table className="w-full text-sm">
+              <table className="w-full table-fixed text-sm">
                 <thead>
-                  <tr className="border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+                  <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
                     <th className="py-1.5 font-medium">Suite</th>
-                    <th className="w-16 py-1.5 text-right font-medium">Cases</th>
-                    <th className="w-40 py-1.5 font-medium">Coverage</th>
-                    <th className="w-24 py-1.5 text-right font-medium">Pass rate</th>
+                    <th className="w-14 py-1.5 text-right font-medium">Cases</th>
+                    <th className="w-32 py-1.5 font-medium">Coverage</th>
+                    <th className="w-20 py-1.5 text-right font-medium">Pass rate</th>
                   </tr>
                 </thead>
                 <tbody>
                   {suites.map((s) => (
                     <tr key={s.id} className="border-b border-border-subtle/60">
-                      <td className="py-2 text-text-primary">{s.name}</td>
+                      <td className="py-2 text-text-primary">
+                        <div className="truncate" title={s.name}>
+                          {s.name}
+                        </div>
+                      </td>
                       <td className="py-2 text-right font-mono text-xs text-text-muted">
                         {s.active}
                       </td>
@@ -235,7 +239,7 @@ export function Reports() {
           {/* Result mix */}
           <Card title="Result mix" subtitle="Every recorded result across all runs">
             <RunProgressBar progress={mix} className="h-2.5" />
-            <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2">
+            <div className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               <MixRow color="bg-status-passed" label="Passed" value={mix.passed} total={mix.total} />
               <MixRow color="bg-status-failed" label="Failed" value={mix.failed} total={mix.total} />
               <MixRow color="bg-status-blocked" label="Blocked" value={mix.blocked} total={mix.total} />

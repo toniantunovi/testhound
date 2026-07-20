@@ -221,21 +221,21 @@ export function Cases() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Header + toolbar */}
-        <div className="flex items-center gap-3 border-b border-border-subtle px-6 py-4">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle px-6 py-4">
+          <div className="min-w-[8rem] flex-1">
             <h1 className="truncate text-lg font-semibold">{heading}</h1>
             <p className="mt-0.5 text-xs text-text-muted">
               {filtered.length} cases · {automated} automated · {drifted} drifted
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-8 items-center gap-2 rounded-control border border-border-subtle bg-bg-surface px-2.5">
-              <Search size={13} className="text-text-muted" />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex h-8 min-w-0 items-center gap-2 rounded-control border border-border-subtle bg-bg-surface px-2.5">
+              <Search size={13} className="shrink-0 text-text-muted" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search cases"
-                className="w-40 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+                className="w-full min-w-0 max-w-40 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
               />
             </div>
             <Button variant="secondary" size="md">
@@ -388,7 +388,7 @@ function SuiteTreeNav({
     });
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-bg-surface/50">
+    <aside className="flex w-52 shrink-0 flex-col border-r border-border-subtle bg-bg-surface/50 xl:w-60">
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <span className="text-[11px] font-medium uppercase tracking-wider text-text-muted">
           Suites
@@ -688,9 +688,9 @@ function CaseTable({
 }) {
   const openAutomation = useSession((s) => s.openAutomation);
   return (
-    <table className="w-full border-collapse text-sm">
+    <table className="w-full min-w-[860px] border-collapse text-sm">
       <thead className="sticky top-0 z-10 bg-bg-base">
-        <tr className="border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+        <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
           <Th className="w-10 pl-6">
             <input type="checkbox" className="accent-brand-primary" />
           </Th>
@@ -711,7 +711,7 @@ function CaseTable({
             onClick={() => onSelect(c.id)}
             onDoubleClick={() => onOpen(c.id)}
             className={cn(
-              "group cursor-pointer border-b border-border-subtle/60",
+              "group cursor-pointer whitespace-nowrap border-b border-border-subtle/60",
               selectedId === c.id
                 ? "bg-bg-surface-2/60"
                 : "hover:bg-bg-surface/60",
@@ -724,14 +724,16 @@ function CaseTable({
             <td className="py-2 pr-4 text-text-primary">
               {c.broken ? (
                 <span
-                  className="inline-flex items-center gap-1.5 text-status-failed"
+                  className="flex max-w-[32rem] items-center gap-1.5 text-status-failed"
                   title={`Front matter could not be parsed: ${c.path}. Open the file and fix the YAML.`}
                 >
                   <TriangleAlert size={13} className="shrink-0" />
-                  {c.title}
+                  <span className="truncate">{c.title}</span>
                 </span>
               ) : (
-                c.title
+                <span className="block max-w-[32rem] truncate" title={c.title}>
+                  {c.title}
+                </span>
               )}
             </td>
             <td className="py-2">
@@ -893,7 +895,7 @@ function CasePreview({
   const openAutomation = useSession((s) => s.openAutomation);
 
   return (
-    <aside className="flex w-96 shrink-0 flex-col border-l border-border-subtle bg-bg-surface/50">
+    <aside className="flex w-80 shrink-0 flex-col border-l border-border-subtle bg-bg-surface/50 xl:w-96">
       <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
         <span className="font-mono text-xs text-brand-primary">{id}</span>
         <div className="flex-1" />

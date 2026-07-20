@@ -35,9 +35,9 @@ export function Runs() {
         {runs.length === 0 ? (
           <EmptyState onNew={newRun} />
         ) : (
-          <table className="w-full border-collapse text-sm">
+          <table className="w-full min-w-[820px] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-bg-base">
-              <tr className="border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+              <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
                 <th className="py-2 pl-6 font-medium">Run</th>
                 <th className="w-32 py-2 font-medium">Milestone</th>
                 <th className="w-32 py-2 font-medium">State</th>
@@ -71,8 +71,10 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
       onClick={onOpen}
       className="group cursor-pointer border-b border-border-subtle/60 hover:bg-bg-surface/60"
     >
-      <td className="py-3 pl-6">
-        <div className="text-text-primary">{run.name}</div>
+      <td className="max-w-[28rem] py-3 pl-6">
+        <div className="truncate text-text-primary" title={run.name}>
+          {run.name}
+        </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 font-mono text-[11px] text-text-muted">
           {run.configuration.length > 0 ? (
             run.configuration.map((c) => (

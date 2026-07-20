@@ -104,16 +104,18 @@ export function RunView() {
   return (
     <div className="flex h-full flex-col">
       {/* Header */}
-      <div className="flex items-center gap-3 border-b border-border-subtle px-6 py-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border-subtle px-6 py-3">
         <button
           onClick={() => navigate("runs")}
-          className="text-text-muted hover:text-text-primary"
+          className="shrink-0 text-text-muted hover:text-text-primary"
         >
           <ArrowLeft size={16} />
         </button>
-        <span className="truncate text-base font-semibold">{run.name}</span>
+        <span className="min-w-0 flex-1 truncate text-base font-semibold">
+          {run.name}
+        </span>
         <RunStateBadge state={run.state} />
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         {pw?.detected ? (
           <>
             <button
@@ -188,8 +190,8 @@ export function RunView() {
       </div>
 
       {/* Summary bar */}
-      <div className="flex items-center gap-6 border-b border-border-subtle px-6 py-3">
-        <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-b border-border-subtle px-6 py-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {run.configuration.map((c) => (
             <span
               key={c}
@@ -202,8 +204,8 @@ export function RunView() {
             <span className="text-xs text-text-secondary">{run.milestone}</span>
           )}
         </div>
-        <div className="flex-1" />
-        <div className="flex w-96 items-center gap-3">
+        <div className="hidden flex-1 sm:block" />
+        <div className="flex w-96 max-w-full shrink items-center gap-3">
           <RunProgressBar progress={progress} className="flex-1" />
           <span className="shrink-0 font-mono text-xs text-text-secondary">
             {progress.passed}/{progress.total}
@@ -214,9 +216,9 @@ export function RunView() {
 
       {/* Cases */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead className="sticky top-0 z-10 bg-bg-base">
-            <tr className="border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+            <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
               <th className="w-24 py-2 pl-6 font-medium">ID</th>
               <th className="py-2 font-medium">Case</th>
               <th className="w-28 py-2 font-medium">Priority</th>
@@ -326,20 +328,22 @@ function CaseRow({
           {row.case}
         </button>
       </td>
-      <td className="py-3 pr-4">
+      <td className="max-w-[36rem] py-3 pr-4">
         <button
           onClick={onOpen}
-          title="Open case"
-          className="text-left text-text-primary hover:text-brand-primary"
+          title={row.title}
+          className="block max-w-full truncate text-left text-text-primary hover:text-brand-primary"
         >
           {row.title}
         </button>
         <div className="mt-1 flex items-center gap-2">
-          <span className="font-mono text-[11px] text-text-muted">
+          <span className="min-w-0 truncate font-mono text-[11px] text-text-muted">
             {row.suite}
             {row.section ? ` / ${row.section}` : ""}
           </span>
-          <AutomationBadge state={row.automationState} />
+          <span className="shrink-0">
+            <AutomationBadge state={row.automationState} />
+          </span>
           {row.source === "automated" && (
             <span className="inline-flex items-center gap-1 rounded bg-bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
               <Play size={9} /> auto

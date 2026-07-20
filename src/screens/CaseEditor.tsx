@@ -170,13 +170,13 @@ export function CaseEditor() {
       <div className="flex items-center gap-3 border-b border-border-subtle px-6 py-3">
         <button
           onClick={() => navigate("cases")}
-          className="text-text-muted hover:text-text-primary"
+          className="shrink-0 text-text-muted hover:text-text-primary"
         >
           <ArrowLeft size={16} />
         </button>
-        <span className="font-mono text-xs text-brand-primary">{draft.id}</span>
-        <span className="font-mono text-xs text-text-muted">·</span>
-        <span className="truncate font-mono text-xs text-text-muted">
+        <span className="shrink-0 font-mono text-xs text-brand-primary">{draft.id}</span>
+        <span className="shrink-0 font-mono text-xs text-text-muted">·</span>
+        <span className="min-w-0 truncate font-mono text-xs text-text-muted">
           {draft.suite}
           {draft.section ? ` / ${draft.section}` : ""}
         </span>
@@ -184,6 +184,7 @@ export function CaseEditor() {
         <Button
           variant="ghost"
           size="sm"
+          className="shrink-0"
           onClick={() => openCaseHistory(draft.id)}
         >
           <History size={13} /> History
@@ -193,13 +194,14 @@ export function CaseEditor() {
           size="sm"
           onClick={confirmDelete}
           disabled={remove.isPending}
-          className="text-text-muted hover:text-status-failed"
+          className="shrink-0 text-text-muted hover:text-status-failed"
         >
           <Trash2 size={13} /> Delete
         </Button>
         <Button
           variant="primary"
           size="sm"
+          className="shrink-0"
           disabled={!dirty || save.isPending}
           onClick={() => save.mutate(draft)}
         >
@@ -274,7 +276,7 @@ export function CaseEditor() {
         </div>
 
         {/* Right rail */}
-        <aside className="w-72 shrink-0 overflow-auto border-l border-border-subtle bg-bg-surface/50 p-4">
+        <aside className="w-60 shrink-0 overflow-auto border-l border-border-subtle bg-bg-surface/50 p-4 xl:w-72">
           <Field label="Priority">
             <Select
               value={draft.priority}

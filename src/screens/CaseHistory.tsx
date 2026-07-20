@@ -62,7 +62,7 @@ export function CaseHistory() {
   return (
     <div className="flex h-full min-h-0">
       {/* Commit timeline */}
-      <div className="flex w-[360px] shrink-0 flex-col border-r border-border-subtle">
+      <div className="flex w-64 shrink-0 flex-col border-r border-border-subtle xl:w-[360px]">
         <div className="flex items-center gap-2 border-b border-border-subtle px-4 py-3">
           <button
             onClick={() => id && openCase(id)}

@@ -34,7 +34,7 @@ export function Dashboard() {
       </header>
 
       {/* KPI tiles */}
-      <div className="mb-6 grid grid-cols-4 gap-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
         <Kpi
           label="Active cases"
           value={data?.activeCases ?? 0}
@@ -58,7 +58,7 @@ export function Dashboard() {
         <Kpi label="Drifted specs" value={data?.drifted ?? 0} hint="need update" />
       </div>
 
-      <div className="grid grid-cols-[1.4fr_1fr] gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         {/* Pass rate over time */}
         <Card title="Pass rate over time" subtitle="Pass rate per run, oldest to newest">
           <PassRateChart trend={data?.passRateTrend ?? []} />
@@ -90,7 +90,7 @@ export function Dashboard() {
       </div>
 
       {/* Needs attention */}
-      <div className="mt-4 grid grid-cols-[1.4fr_1fr] gap-4">
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <Card title="Recent runs">
           {runs.length === 0 ? (
             <button
