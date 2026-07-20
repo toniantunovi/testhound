@@ -29,6 +29,10 @@
 
 ---
 
+<p align="center">
+  <img src="assets/readme-demo.webp" alt="TestHound in action: dashboard, test cases, AI-assisted Playwright automation, and runs" width="900" />
+</p>
+
 TestHound is a modern alternative to tools like TestRail, built as a [Tauri](https://v2.tauri.app) desktop app. It stores every artifact (test cases, suites, runs, results, configuration) as plain files inside your Git repository, and it uses coding agents (Claude Code and Codex) to generate and maintain Playwright automated tests, keeping manual test cases and their automation linked.
 
 ## Install
