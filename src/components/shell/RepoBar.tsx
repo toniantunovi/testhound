@@ -141,7 +141,7 @@ export function RepoBar() {
   return (
     <header
       data-tauri-drag-region
-      className="th-drag flex h-11 shrink-0 items-center gap-3 overflow-hidden border-b border-border-subtle bg-bg-surface px-3 pl-20"
+      className="th-drag flex h-11 shrink-0 items-center gap-3 overflow-x-clip border-b border-border-subtle bg-bg-surface px-3 pl-20"
     >
       {/* Brand */}
       <div data-tauri-drag-region className="flex shrink-0 items-center gap-2">
