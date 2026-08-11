@@ -17,7 +17,7 @@ use crate::repo::runs::{self, CreateRun, RunDetail, RunSummary};
 use crate::repo::{self, CaseSummary, Paths, SuiteTree};
 use crate::domain::{
     Configuration, IncludeMode, Milestone, Project, ResultSource, ResultStatus, Run, RunResult,
-    RunState, Suite, TestCase,
+    RunState, Section, Suite, TestCase,
 };
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -278,10 +278,83 @@ pub async fn create_suite(name: String, state: tauri::State<'_, AppState>) -> Re
         id: id.clone(),
         name: name.to_string(),
         description: None,
-        order: existing.len() as i64,
+        order: repo::next_order(existing.iter().map(|s| s.order)),
     };
     repo::create_suite(&paths, &suite)?;
     Ok(id)
+}
+
+/// Create a folder (section) inside a suite from a display name. The id is a
+/// slug of the name; errors if that id is taken within the suite. Returns the
+/// new section id. The change lands in the working tree for review.
+#[tauri::command]
+pub async fn create_section(
+    suite: String,
+    name: String,
+    parent: Option<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<String> {
+    let paths = state.paths()?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(Error::Other("folder name is empty".into()));
+    }
+    let id = slug::slugify(name);
+    if id.is_empty() {
+        return Err(Error::Other("folder name has no usable characters".into()));
+    }
+    let tree = repo::list_suites(&paths)?;
+    let existing = tree
+        .iter()
+        .find(|s| s.id == suite)
+        .ok_or_else(|| Error::Other(format!("suite not found: {suite}")))?;
+    if existing.sections.iter().any(|s| s.id == id) {
+        return Err(Error::Other(format!(
+            "a folder \"{name}\" already exists in this suite"
+        )));
+    }
+    if let Some(p) = &parent {
+        if !existing.sections.iter().any(|s| &s.id == p) {
+            return Err(Error::Other(format!("folder not found: {p}")));
+        }
+    }
+    let section = Section {
+        id: id.clone(),
+        name: name.to_string(),
+        parent,
+        order: repo::next_order(existing.sections.iter().map(|s| s.order)),
+    };
+    repo::create_section(&paths, &suite, &section)?;
+    Ok(id)
+}
+
+/// Persist a manual order for the suites in the sidebar, in the given sequence.
+#[tauri::command]
+pub async fn reorder_suites(ids: Vec<String>, state: tauri::State<'_, AppState>) -> Result<()> {
+    repo::reorder_suites(&state.paths()?, &ids)
+}
+
+/// Persist a manual order for a suite's folders, in the given sequence.
+#[tauri::command]
+pub async fn reorder_sections(
+    suite: String,
+    ids: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    repo::reorder_sections(&state.paths()?, &suite, &ids)
+}
+
+/// Persist a manual order for the cases of one suite/folder, in the given
+/// sequence. `ids` must list cases of that exact group; the caller sends the
+/// group's full order after the move, so the backend never guesses an index.
+#[tauri::command]
+pub async fn reorder_cases(
+    suite: String,
+    section: Option<String>,
+    ids: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<()> {
+    repo::reorder_cases(&state.paths()?, &suite, section.as_deref(), &ids)
 }
 
 /// Rename a suite's display name; the id (and thus directory and case front
@@ -342,18 +415,27 @@ pub async fn delete_section(
     repo::delete_section(&paths, &suite, &id)
 }
 
-/// Move a case into another suite (front matter + file location).
+/// Move a case into another suite and/or folder (front matter + file location).
 #[tauri::command]
 pub async fn move_case(
     id: String,
     suite: String,
+    section: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<TestCase> {
     let paths = state.paths()?;
-    if !repo::list_suites(&paths)?.iter().any(|s| s.id == suite) {
-        return Err(Error::Other(format!("suite not found: {suite}")));
+    let target = repo::list_suites(&paths)?
+        .into_iter()
+        .find(|s| s.id == suite)
+        .ok_or_else(|| Error::Other(format!("suite not found: {suite}")))?;
+    if let Some(sec) = &section {
+        if !target.sections.iter().any(|s| &s.id == sec) {
+            return Err(Error::Other(format!(
+                "folder not found in {suite}: {sec}"
+            )));
+        }
     }
-    repo::move_case(&paths, &id, &suite)
+    repo::move_case(&paths, &id, &suite, section.as_deref())
 }
 
 /// Duplicate a case under a fresh id, optionally into another suite.

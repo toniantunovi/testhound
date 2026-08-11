@@ -238,8 +238,9 @@ export function NewRun() {
                   Terms like{" "}
                   <code className="text-text-secondary">suite:checkout</code>,{" "}
                   <code className="text-text-secondary">tag:p1</code>,{" "}
-                  <code className="text-text-secondary">priority:high</code>,
-                  joined by <code className="text-text-secondary">AND</code> /{" "}
+                  <code className="text-text-secondary">priority:high</code>,{" "}
+                  <code className="text-text-secondary">ref:4821</code>, joined by{" "}
+                  <code className="text-text-secondary">AND</code> /{" "}
                   <code className="text-text-secondary">OR</code>.
                 </p>
               </Field>

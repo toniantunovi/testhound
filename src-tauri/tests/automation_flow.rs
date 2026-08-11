@@ -9,13 +9,18 @@ use testhound_lib::domain::AutomationState;
 use testhound_lib::repo::{self, Paths};
 
 fn tmp_repo() -> PathBuf {
+    // Parallel tests can read the same nanosecond; the counter keeps each repo
+    // distinct (see playwright_flow for the failure this prevents).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir().join(format!(
-        "testhound-auto-{}-{}",
+        "testhound-auto-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
     std::fs::create_dir_all(&base).unwrap();
     git2::Repository::init(&base).unwrap();

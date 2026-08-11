@@ -689,6 +689,7 @@ mod tests {
                 title: "Add item to cart".into(),
                 suite: "checkout".into(),
                 section: None,
+                order: None,
                 priority: Priority::High,
                 kind: CaseType::Functional,
                 status: CaseStatus::Active,

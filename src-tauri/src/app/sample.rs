@@ -415,12 +415,13 @@ fn write_case(paths: &Paths, spec: &CaseSpec) -> Result<()> {
         title: spec.title.to_string(),
         suite: spec.suite.to_string(),
         section: spec.section.map(str::to_string),
+        order: None,
         priority: spec.priority,
         kind: spec.kind,
         status: CaseStatus::Active,
         owner: Some(spec.owner.to_string()),
         tags: spec.tags.iter().map(|s| s.to_string()).collect(),
-        references: vec![],
+        references: demo_references(spec.id),
         estimate: None,
         automation: Automation {
             state,
@@ -443,6 +444,20 @@ fn write_case(paths: &Paths, spec: &CaseSpec) -> Result<()> {
     };
     repo::save_case(paths, &case)?;
     Ok(())
+}
+
+/// Ticket references for the demo fixture, so searching by reference (typing
+/// `4821` or `AB-4821`) finds something in a freshly seeded project.
+fn demo_references(id: &str) -> Vec<String> {
+    let refs: &[&str] = match id {
+        "TC-0007" => &["AB-4821"],
+        "TC-0008" => &["AB-4822"],
+        "TC-0011" => &["AB-3310", "https://example.test/specs/checkout-totals"],
+        "TC-0001" => &["AB-1207"],
+        "TC-0021" => &["AB-2044"],
+        _ => &[],
+    };
+    refs.iter().map(|s| s.to_string()).collect()
 }
 
 fn slugish(title: &str) -> String {

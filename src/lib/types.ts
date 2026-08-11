@@ -62,11 +62,14 @@ export interface CaseSummary {
   title: string;
   suite: string;
   section: string | null;
+  /** Manual position within the suite/folder; null when never reordered. */
+  order: number | null;
   priority: Priority;
   type: CaseType;
   status: CaseStatus;
   owner: string | null;
   tags: string[];
+  references: string[];
   automationState: AutomationState;
   updated: string | null;
   path: string;
@@ -94,6 +97,7 @@ export interface TestCase {
   title: string;
   suite: string;
   section?: string | null;
+  order?: number | null;
   priority: Priority;
   type: CaseType;
   status: CaseStatus;

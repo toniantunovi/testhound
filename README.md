@@ -81,7 +81,8 @@ TestHound keeps itself up to date via the in-app updater (**Settings › Updates
 
 - Scaffolds or opens a `testhound/` directory in any Git repository and reads/writes the plain-file format.
 - Dashboard, test case list, and a full test case editor with structured steps and expectations.
-- Suites, milestones, and configurations.
+- Suites with folders, drag-and-drop ordering of suites, folders, and cases, milestones, and configurations.
+- Search by title, tag, case id, or ticket reference: the number alone is enough (`4821` finds `AB-4821`).
 
   </td>
     <td width="50%" valign="top">

@@ -14,13 +14,19 @@ use testhound_lib::repo::runs::{self, CreateRun};
 use testhound_lib::repo::{self, Paths};
 
 fn tmp_repo() -> PathBuf {
+    // Tests in a binary run in parallel and can read the same nanosecond, which
+    // had two of them init the same repo ("config.lock: File exists"). The
+    // counter is what the other test files already use to stay unique.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir().join(format!(
-        "testhound-pw-{}-{}",
+        "testhound-pw-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
     std::fs::create_dir_all(&base).unwrap();
     git2::Repository::init(&base).unwrap();

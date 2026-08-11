@@ -51,6 +51,135 @@ pub fn serialize(case: &TestCase) -> Result<String> {
     Ok(format!("---\n{yaml}---\n\n{body}\n"))
 }
 
+/// Set the front matter's `order:` to `order`, editing that one line in place and
+/// leaving the rest of the file byte-for-byte alone. Returns `None` when the file
+/// already says that. A trailing comment on the `order:` line itself is the one
+/// thing that does not survive, since that whole line is rewritten.
+///
+/// Reordering rewrites every case in a group, so it must not go through
+/// parse/serialize: that would reformat the YAML of untouched cases and drop any
+/// front-matter key this app does not model, turning one drag into a noisy
+/// multi-file diff. Only a top-level `order:` counts, never an `order:` nested
+/// inside `automation:` or `custom:`.
+///
+/// Editing by line only holds while the lines it touches are single-line scalars.
+/// Front matter where they are not (a block scalar, a value on the following
+/// line, a second `order:` key) is refused rather than silently corrupted: the
+/// caller surfaces the error and the file is left alone.
+pub fn set_order(content: &str, order: i64) -> Result<Option<String>> {
+    fn bare(line: &str) -> &str {
+        line.trim_start_matches('\u{feff}')
+            .trim_end_matches(['\n', '\r'])
+    }
+
+    // The top-level key a front-matter line declares, or "" for anything indented
+    // (nested under `automation:`/`custom:`) or not a key at all. Normalized, so
+    // `order : 5` and `"order": 5` are recognized as the same key they are to a
+    // YAML parser; missing one would insert a second `order:` and leave the file
+    // unparseable.
+    fn key_of(line: &str) -> &str {
+        let text = bare(line);
+        if text.starts_with(char::is_whitespace) {
+            return "";
+        }
+        let Some((raw, _)) = text.split_once(':') else {
+            return "";
+        };
+        let raw = raw.trim();
+        raw.strip_prefix('"')
+            .and_then(|r| r.strip_suffix('"'))
+            .or_else(|| raw.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')))
+            .unwrap_or(raw)
+    }
+
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    if lines.first().copied().map(bare) != Some("---") {
+        return Err(Error::InvalidFormat("case file has no front matter".into()));
+    }
+    let close = (1..lines.len())
+        .find(|&i| bare(lines[i]) == "---")
+        .ok_or_else(|| Error::InvalidFormat("case file front matter is not closed".into()))?;
+
+    // Does this line hold its whole value, so replacing it (or inserting after it)
+    // cannot orphan a continuation?
+    let single_line_value = |i: usize| {
+        let text = bare(lines[i]);
+        let Some((_, value)) = text.split_once(':') else {
+            return false;
+        };
+        let value = value.trim();
+        if value.is_empty() || value.starts_with('|') || value.starts_with('>') {
+            return false;
+        }
+        match lines.get(i + 1) {
+            // An indented next line continues this value.
+            Some(next) => {
+                let next = bare(next);
+                next.is_empty() || !next.starts_with(char::is_whitespace)
+            }
+            None => true,
+        }
+    };
+
+    let target = format!("order: {order}");
+    let orders: Vec<usize> = (1..close).filter(|&i| key_of(lines[i]) == "order").collect();
+    if orders.len() > 1 {
+        return Err(Error::InvalidFormat(
+            "case file front matter has more than one order key".into(),
+        ));
+    }
+    let existing = orders.first().copied();
+    if let Some(i) = existing {
+        if !single_line_value(i) {
+            return Err(Error::InvalidFormat(
+                "case file's order value spans more than one line".into(),
+            ));
+        }
+        if bare(lines[i]).trim_end() == target {
+            return Ok(None);
+        }
+    }
+
+    // Keep the documented key order: after `section:` when there is one, else
+    // after `suite:`. With neither (malformed front matter), go directly after the
+    // opening fence, which is always structurally safe, rather than appending at
+    // the end where the last line may be a block scalar's content.
+    let insert_after = match (1..close)
+        .filter(|&i| matches!(key_of(lines[i]), "section" | "suite"))
+        .max()
+    {
+        Some(i) if single_line_value(i) => i,
+        Some(_) => {
+            return Err(Error::InvalidFormat(
+                "case file's suite/section value spans more than one line".into(),
+            ))
+        }
+        None => 0,
+    };
+    // Match the line being replaced or followed, not the file: a front matter in
+    // LF must not gain a CRLF line because the body happens to have one.
+    let newline = if lines[existing.unwrap_or(insert_after)].ends_with("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+
+    let mut out = String::with_capacity(content.len() + target.len() + 2);
+    for (i, line) in lines.iter().enumerate() {
+        if existing == Some(i) {
+            out.push_str(&target);
+            out.push_str(newline);
+            continue;
+        }
+        out.push_str(line);
+        if existing.is_none() && i == insert_after {
+            out.push_str(&target);
+            out.push_str(newline);
+        }
+    }
+    Ok(Some(out))
+}
+
 /// Stable content hash of the body, used for drift detection. Short hex prefix,
 /// mirroring the `source_hash: 9f2ab1` style in the data model.
 pub fn content_hash(body: &str) -> String {
@@ -122,6 +251,120 @@ tags:
         let reparsed = parse(&out).unwrap();
         assert_eq!(reparsed.front.title, "Add item to cart");
         assert_eq!(reparsed.steps[0].expected.as_deref(), Some("Details visible"));
+    }
+
+    #[test]
+    fn set_order_edits_one_line_and_keeps_everything_else() {
+        // Note `component:`, a key this app does not model, and a comment: a
+        // reorder must not be able to destroy either.
+        let content = "\
+---
+id: TC-0007
+title: Add item to cart
+suite: checkout
+section: cart
+priority: high
+component: cart # hand-added
+tags:
+- cart
+automation:
+  state: linked
+  order: not-a-key # nested, must be ignored
+---
+
+## Steps
+1. Open the product page
+";
+        let out = set_order(content, 20).unwrap().unwrap();
+        assert!(out.contains("section: cart\norder: 20\npriority: high"));
+        assert!(out.contains("component: cart # hand-added"));
+        assert!(out.contains("  order: not-a-key # nested, must be ignored"));
+        assert_eq!(out.lines().count(), content.lines().count() + 1);
+        assert_eq!(parse(&out).unwrap().front.order, Some(20));
+
+        // Rewriting the same value is a no-op, so a drag that lands where it
+        // started leaves the file (and the Git diff) untouched.
+        assert!(set_order(&out, 20).unwrap().is_none());
+
+        // An existing order is replaced in place, not duplicated.
+        let changed = set_order(&out, 30).unwrap().unwrap();
+        assert_eq!(changed.matches("\norder:").count(), 1);
+        assert_eq!(parse(&changed).unwrap().front.order, Some(30));
+        assert_eq!(changed.lines().count(), out.lines().count());
+    }
+
+    #[test]
+    fn set_order_handles_sparse_front_matter_and_crlf() {
+        // No `section:`: the order line follows `suite:`.
+        let minimal = "---\nid: TC-1\ntitle: T\nsuite: s\n---\n\n## Steps\n1. Go\n";
+        let out = set_order(minimal, 10).unwrap().unwrap();
+        assert!(out.contains("suite: s\norder: 10\n"));
+        assert_eq!(parse(&out).unwrap().front.order, Some(10));
+
+        // CRLF files keep their line endings.
+        let crlf = "---\r\nid: TC-2\r\ntitle: T\r\nsuite: s\r\n---\r\n\r\n## Steps\r\n1. Go\r\n";
+        let out = set_order(crlf, 10).unwrap().unwrap();
+        assert!(out.contains("suite: s\r\norder: 10\r\n"));
+        assert_eq!(parse(&out).unwrap().front.order, Some(10));
+
+        // A file with no front matter is an error, never a silent rewrite.
+        assert!(set_order("## Steps\n1. Go\n", 10).is_err());
+        assert!(set_order("---\nid: TC-3\n", 10).is_err());
+    }
+
+    #[test]
+    fn set_order_recognizes_every_spelling_of_the_key() {
+        // A YAML parser reads all three as the key `order`. Missing one would add
+        // a second `order:` and leave the case permanently unparseable.
+        for spelling in ["order : 5", "\"order\": 5", "'order': 5", "order:5"] {
+            let content =
+                format!("---\nid: TC-1\ntitle: T\nsuite: s\n{spelling}\n---\n\n## Steps\n1. Go\n");
+            let out = set_order(&content, 10).unwrap().unwrap();
+            assert_eq!(
+                out.matches("order").count(),
+                1,
+                "{spelling} should be replaced, not duplicated"
+            );
+            assert_eq!(parse(&out).unwrap().front.order, Some(10), "{spelling}");
+            assert!(set_order(&out, 10).unwrap().is_none(), "{spelling}");
+        }
+    }
+
+    #[test]
+    fn set_order_refuses_front_matter_it_cannot_edit_by_line() {
+        // A value that continues onto the next line cannot be replaced or
+        // inserted after by line index, so the file is left alone.
+        let cases = [
+            // Block scalar as the insertion anchor.
+            "---\nid: TC-1\ntitle: T\nsuite: >-\n  s\n---\n\nbody\n",
+            // `order:` with its value on the following line.
+            "---\nid: TC-1\ntitle: T\nsuite: s\norder:\n  5\n---\n\nbody\n",
+            // Two order keys: which one wins is not ours to guess.
+            "---\nid: TC-1\ntitle: T\nsuite: s\norder: 5\norder : 7\n---\n\nbody\n",
+        ];
+        for content in cases {
+            assert!(
+                set_order(content, 10).is_err(),
+                "should refuse rather than corrupt: {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn set_order_takes_its_line_ending_from_the_line_it_touches() {
+        // LF front matter, one CRLF line in the body: the inserted line stays LF.
+        let mixed = "---\nid: TC-1\ntitle: T\nsuite: s\n---\n\nline one\r\nline two\n";
+        let out = set_order(mixed, 10).unwrap().unwrap();
+        assert!(out.contains("suite: s\norder: 10\n"));
+        assert!(!out.contains("order: 10\r\n"));
+        assert!(out.contains("line one\r\n"), "the body is untouched");
+
+        // A BOM survives, and front matter with neither suite nor section gets the
+        // key right after the fence rather than after a possibly-continuing line.
+        let bom = "\u{feff}---\nid: TC-1\ntitle: T\n---\n\nbody\n";
+        let out = set_order(bom, 10).unwrap().unwrap();
+        assert!(out.starts_with("\u{feff}---\norder: 10\n"));
+        assert!(set_order(&out, 10).unwrap().is_none());
     }
 
     #[test]

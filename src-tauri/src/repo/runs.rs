@@ -184,10 +184,25 @@ fn enum_str<T: Serialize>(v: &T) -> String {
         .unwrap_or_default()
 }
 
+/// Normalize an id or a reference for search: lowercased with separators
+/// dropped, so `AB-4821`, `ab4821` and a bare `4821` all compare against the
+/// same key. Typing just the number is the common case when looking a case up by
+/// its ticket. Mirrored by `searchKey` in `src/lib/cases.ts`.
+pub fn search_key(value: &str) -> String {
+    // Lowercase first, then filter: a 1-to-2 lowercase mapping (`İ` -> `i` +
+    // U+0307) would otherwise smuggle in a combining mark that the TS side,
+    // which lowercases the whole string first, strips.
+    value
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+
 /// Evaluate a filter query against a case. The language is a disjunction of
 /// AND-groups: `suite:checkout AND tag:p1 OR tag:smoke`. Bare terms match the
-/// id, title, or tags. `OR`/`AND` are case-insensitive keywords; an empty query
-/// matches everything.
+/// id, title, tags, or references. `OR`/`AND` are case-insensitive keywords; an
+/// empty query matches everything.
 pub fn matches_query(c: &CaseSummary, query: &str) -> bool {
     let q = query.trim();
     if q.is_empty() {
@@ -219,8 +234,28 @@ pub fn matches_query(c: &CaseSummary, query: &str) -> bool {
     any_group
 }
 
+/// Keys the query language understands. A term whose prefix is not one of these
+/// is free text, not a typed term: pasting a reference URL (`https://…`) or a
+/// title ending in a colon must search, not silently match nothing.
+const QUERY_KEYS: &[&str] = &[
+    "suite",
+    "section",
+    "tag",
+    "priority",
+    "type",
+    "status",
+    "owner",
+    "automation",
+    "ref",
+    "reference",
+];
+
 fn term_matches(c: &CaseSummary, term: &str) -> bool {
-    if let Some((key, value)) = term.split_once(':') {
+    let typed = term.split_once(':').filter(|(key, _)| {
+        let key = key.trim().to_lowercase();
+        QUERY_KEYS.contains(&key.as_str())
+    });
+    if let Some((key, value)) = typed {
         let value = value.trim().to_ascii_lowercase();
         match key.trim().to_ascii_lowercase().as_str() {
             "suite" => c.suite.eq_ignore_ascii_case(&value),
@@ -239,13 +274,27 @@ fn term_matches(c: &CaseSummary, term: &str) -> bool {
                 .map(|o| o.eq_ignore_ascii_case(&value))
                 .unwrap_or(false),
             "automation" => enum_str(&c.automation_state) == value,
+            // `ref:4821` finds a case referencing AB-4821: the separators and the
+            // project prefix are optional, so the number alone is enough.
+            "ref" | "reference" => {
+                let key = search_key(&value);
+                !key.is_empty() && c.references.iter().any(|r| search_key(r).contains(&key))
+            }
+            // Unreachable: QUERY_KEYS gates the branch.
             _ => false,
         }
     } else {
-        let needle = term.to_ascii_lowercase();
-        c.title.to_ascii_lowercase().contains(&needle)
-            || c.id.to_ascii_lowercase().contains(&needle)
-            || c.tags.iter().any(|t| t.to_ascii_lowercase().contains(&needle))
+        // Unicode-aware lowercasing, matching the search box in the case list:
+        // `über` has to find "Überprüfung" in both places.
+        let needle = term.to_lowercase();
+        let key = search_key(term);
+        c.title.to_lowercase().contains(&needle)
+            || c.tags.iter().any(|t| t.to_lowercase().contains(&needle))
+            // Ids and references match on their normalized key, so `7` finds
+            // TC-0007 and `4821` finds a case referencing AB-4821.
+            || (!key.is_empty()
+                && (search_key(&c.id).contains(&key)
+                    || c.references.iter().any(|r| search_key(r).contains(&key))))
     }
 }
 
@@ -596,16 +645,23 @@ mod tests {
             title: format!("Case {id}"),
             suite: suite.into(),
             section: None,
+            order: None,
             priority,
             kind,
             status: CaseStatus::Active,
             owner: None,
             tags: tags.iter().map(|s| s.to_string()).collect(),
+            references: vec![],
             automation_state: AutomationState::None,
             updated: None,
             path: format!("suites/{suite}/cases/{id}.md"),
             broken: false,
         }
+    }
+
+    fn with_refs(mut c: CaseSummary, refs: &[&str]) -> CaseSummary {
+        c.references = refs.iter().map(|s| s.to_string()).collect();
+        c
     }
 
     fn corpus() -> Vec<CaseSummary> {
@@ -657,6 +713,76 @@ mod tests {
         assert_eq!(ids(&c, "type:e2e"), vec!["TC-0010".to_string()]);
         // Free text hits id/title/tags.
         assert_eq!(ids(&c, "TC-0021"), vec!["TC-0021".to_string()]);
+    }
+
+    #[test]
+    fn references_match_with_or_without_the_prefix() {
+        let c = vec![
+            with_refs(
+                case("TC-0007", "checkout", &[], Priority::High, CaseType::Functional),
+                &["AB-4821", "https://example.test/docs/checkout"],
+            ),
+            with_refs(
+                case("TC-0010", "checkout", &[], Priority::Medium, CaseType::E2e),
+                &["AB-91"],
+            ),
+        ];
+        // The number alone is enough, with or without the project prefix and
+        // whatever separator the author used.
+        assert_eq!(ids(&c, "4821"), vec!["TC-0007".to_string()]);
+        assert_eq!(ids(&c, "AB-4821"), vec!["TC-0007".to_string()]);
+        assert_eq!(ids(&c, "ab4821"), vec!["TC-0007".to_string()]);
+        assert_eq!(ids(&c, "ref:4821"), vec!["TC-0007".to_string()]);
+        assert_eq!(ids(&c, "ref:AB-91"), vec!["TC-0010".to_string()]);
+        // A reference on another case does not leak into the match.
+        assert!(ids(&c, "ref:4821").len() == 1);
+        // Unmatched numbers find nothing, and an empty ref: term is not a wildcard.
+        assert!(ids(&c, "5555").is_empty());
+        assert!(ids(&c, "ref:").is_empty());
+    }
+
+    #[test]
+    fn bare_numbers_match_case_ids() {
+        let c = corpus();
+        // Zero padding is not something anyone should have to type.
+        assert_eq!(ids(&c, "21"), vec!["TC-0021".to_string()]);
+        assert_eq!(ids(&c, "tc-0001"), vec!["TC-0001".to_string()]);
+    }
+
+    #[test]
+    fn unknown_keys_are_free_text_not_typed_terms() {
+        let url = "https://example.test/specs/checkout-totals";
+        let c = vec![
+            with_refs(
+                case("TC-0007", "checkout", &[], Priority::High, CaseType::Functional),
+                &[url],
+            ),
+            case("TC-0010", "checkout", &[], Priority::Medium, CaseType::E2e),
+        ];
+        // A pasted reference URL splits on its own colon; it must still search.
+        assert_eq!(ids(&c, url), vec!["TC-0007".to_string()]);
+        assert_eq!(ids(&c, &format!("ref:{url}")), vec!["TC-0007".to_string()]);
+        // A real key with an unknown value still matches nothing.
+        assert!(ids(&c, "suite:nope").is_empty());
+    }
+
+    #[test]
+    fn free_text_is_unicode_aware() {
+        let mut c = case("TC-0100", "checkout", &["Straße"], Priority::High, CaseType::Functional);
+        c.title = "Überprüfung des Warenkorbs".into();
+        let corpus = vec![c];
+        assert_eq!(ids(&corpus, "über"), vec!["TC-0100".to_string()]);
+        assert_eq!(ids(&corpus, "STRASSE").len(), 0); // ß does not fold to ss here
+        assert_eq!(ids(&corpus, "straße"), vec!["TC-0100".to_string()]);
+    }
+
+    #[test]
+    fn search_key_matches_the_frontend_normalization() {
+        // Lowercase-then-filter: `İ` lowercases to `i` + U+0307, and the
+        // combining mark must be dropped so both sides agree on "ist12".
+        assert_eq!(search_key("İST-12"), "ist12");
+        assert_eq!(search_key("AB-4821"), "ab4821");
+        assert_eq!(search_key("  --  "), "");
     }
 
     #[test]

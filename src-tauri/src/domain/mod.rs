@@ -267,6 +267,12 @@ pub struct FrontMatter {
     pub suite: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    /// Manual sort position within the case's suite/section. Written only when
+    /// the user reorders cases; a case without one sorts after the ordered ones,
+    /// by id. Kept sparse (multiples of 10) so a single drag rewrites the whole
+    /// group deterministically instead of leaving gaps to guess about.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<i64>,
     #[serde(default)]
     pub priority: Priority,
     #[serde(rename = "type", default)]

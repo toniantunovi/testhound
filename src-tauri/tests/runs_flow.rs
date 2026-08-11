@@ -9,13 +9,18 @@ use testhound_lib::repo::runs::{self, CreateRun};
 use testhound_lib::repo::{self, Paths};
 
 fn tmp_repo() -> PathBuf {
+    // Parallel tests can read the same nanosecond; the counter keeps each repo
+    // distinct (see playwright_flow for the failure this prevents).
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
     let base = std::env::temp_dir().join(format!(
-        "testhound-runs-{}-{}",
+        "testhound-runs-{}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        COUNTER.fetch_add(1, Ordering::SeqCst)
     ));
     std::fs::create_dir_all(&base).unwrap();
     git2::Repository::init(&base).unwrap();
@@ -39,20 +44,23 @@ fn seed_list_and_record_results() {
     assert_eq!(all.len(), 3);
 
     // Regression R3: filter "suite:checkout OR tag:p1" resolves to 8 cases,
-    // 6 passed / 1 failed / 1 untested, and is left in progress.
+    // 5 passed / 1 failed / 1 blocked / 1 awaiting retest, and is left in
+    // progress. Every member has a result, so nothing is untested.
     let r3 = all.iter().find(|r| r.name == "Regression R3").unwrap();
     assert_eq!(r3.state, RunState::InProgress);
     assert_eq!(r3.progress.total, 8);
-    assert_eq!(r3.progress.passed, 6);
+    assert_eq!(r3.progress.passed, 5);
     assert_eq!(r3.progress.failed, 1);
-    assert_eq!(r3.progress.untested, 1);
-    assert_eq!(r3.progress.pass_rate(), 86); // 6 of 7 executed
+    assert_eq!(r3.progress.blocked, 1);
+    assert_eq!(r3.progress.retest, 1);
+    assert_eq!(r3.progress.untested, 0);
+    assert_eq!(r3.progress.pass_rate(), 63); // 5 of 8 executed
 
-    // The detail view joins case metadata; the untested case is TC-0010.
+    // The detail view joins case metadata; TC-0010 is the blocked case.
     let detail = runs::load_run(&paths, &r3.id).unwrap();
     assert_eq!(detail.rows.len(), 8);
     let tc10 = detail.rows.iter().find(|row| row.case == "TC-0010").unwrap();
-    assert_eq!(tc10.status, ResultStatus::Untested);
+    assert_eq!(tc10.status, ResultStatus::Blocked);
     assert!(!tc10.title.is_empty());
 
     // Recording a result appends history and updates the row.
@@ -67,11 +75,12 @@ fn seed_list_and_record_results() {
     )
     .unwrap();
     let detail = runs::load_run(&paths, &r3.id).unwrap();
-    assert_eq!(detail.progress.untested, 0);
-    assert_eq!(detail.progress.passed, 7);
+    assert_eq!(detail.progress.blocked, 0);
+    assert_eq!(detail.progress.passed, 6);
     let tc10 = detail.rows.iter().find(|row| row.case == "TC-0010").unwrap();
     assert_eq!(tc10.status, ResultStatus::Passed);
-    assert_eq!(tc10.attempts, 1);
+    // Second attempt: the seeded "blocked" is kept in the history.
+    assert_eq!(tc10.attempts, 2);
     assert_eq!(tc10.comment.as_deref(), Some("Recovered on retry"));
 
     // A non-member case cannot be recorded against the run.

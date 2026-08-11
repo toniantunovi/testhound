@@ -61,6 +61,9 @@ Front-matter keys, in this order (omit optional keys when empty, never write
 - title     (required)  one line
 - suite     (required)  the suite id (folder name), e.g. `checkout`
 - section   (optional)  a section id within the suite
+- order     (optional)  manual sort position within the suite/section, in
+  multiples of 10 (10, 20, 30, ...). Omit it unless you are deliberately
+  ordering a whole group; cases without it sort after the ordered ones, by id.
 - priority  (default medium)  one of: low | medium | high | critical
 - type      (default functional)  one of: functional | regression | smoke | e2e | negative | a11y | perf
 - status    (default active)  one of: draft | active | deprecated
@@ -112,6 +115,15 @@ SUITE FILE FORMAT (`suite.yml`)
   order: 0
 Create a new suite by making `{th}/suites/<id>/suite.yml` plus an empty
 `{th}/suites/<id>/cases/` directory. `order` controls sidebar sort.
+
+SECTION FILE FORMAT (`sections/<id>.yml`)
+  id: cart
+  name: Cart
+  order: 10
+A section is a folder inside a suite, used to group its cases; it is metadata,
+not a directory, so its cases stay in `{th}/suites/<suite>/cases/` and only carry
+`section: <id>` in their front matter. `parent: <other-section-id>` nests one
+folder under another. `order` controls the sort within the suite.
 
 LINKS FILE FORMAT (`automation/links.yml`)
   links:

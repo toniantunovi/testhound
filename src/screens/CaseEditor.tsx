@@ -23,6 +23,7 @@ import type {
   CaseStatus,
   CaseType,
   Priority,
+  Section,
   TestCase,
 } from "@/lib/types";
 import { useSession } from "@/store/session";
@@ -65,6 +66,12 @@ export function CaseEditor() {
     queryKey: ["case", id],
     queryFn: () => api.getCase(id!),
     enabled: !!id,
+  });
+
+  // Only needed for the folder picker: which folders the case's suite has.
+  const { data: suites = [] } = useQuery({
+    queryKey: ["suites"],
+    queryFn: api.listSuites,
   });
 
   const [draft, setDraft] = useState<TestCase | null>(null);
@@ -277,6 +284,16 @@ export function CaseEditor() {
 
         {/* Right rail */}
         <aside className="w-60 shrink-0 overflow-auto border-l border-border-subtle bg-bg-surface/50 p-4 xl:w-72">
+          <Field label="Folder">
+            <SectionSelect
+              value={draft.section ?? null}
+              sections={suites.find((s) => s.id === draft.suite)?.sections ?? []}
+              // Clearing the manual order matches what moving a case from the
+              // case list does: it lands at the end of its new folder rather
+              // than at whatever position it held in the old one.
+              onChange={(section) => patch({ section, order: null })}
+            />
+          </Field>
           <Field label="Priority">
             <Select
               value={draft.priority}
@@ -532,6 +549,52 @@ export function CaseEditor() {
         />
       )}
     </div>
+  );
+}
+
+/** Which folder of its suite the case belongs to. Folders are metadata, not
+ *  directories, so this saves with the case like any other field: no file moves.
+ *  Suites are changed from the case list instead, where the move relocates the
+ *  file. */
+function SectionSelect({
+  value,
+  sections,
+  onChange,
+}: {
+  value: string | null;
+  sections: Section[];
+  onChange: (section: string | null) => void;
+}) {
+  if (sections.length === 0 && !value) {
+    return (
+      <p className="text-xs text-text-muted">
+        No folders in this suite yet. Add one from the suite’s menu in Test cases.
+      </p>
+    );
+  }
+  // A folder that has been deleted from under the case stays selectable, so
+  // saving an unrelated edit cannot silently unfile it.
+  const orphan = value && !sections.some((s) => s.id === value) ? value : null;
+  return (
+    <select
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value || null)}
+      className="h-8 w-full rounded-control border border-border-subtle bg-bg-base px-2 text-sm text-text-primary focus:border-border-strong focus:outline-none"
+    >
+      <option value="" className="bg-bg-surface">
+        No folder
+      </option>
+      {sections.map((s) => (
+        <option key={s.id} value={s.id} className="bg-bg-surface">
+          {s.name}
+        </option>
+      ))}
+      {orphan && (
+        <option value={orphan} className="bg-bg-surface">
+          {orphan} (missing)
+        </option>
+      )}
+    </select>
   );
 }
 

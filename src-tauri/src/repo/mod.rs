@@ -54,12 +54,17 @@ pub struct CaseSummary {
     pub title: String,
     pub suite: String,
     pub section: Option<String>,
+    /// Manual sort position within the suite/section; `None` when never reordered.
+    pub order: Option<i64>,
     pub priority: Priority,
     #[serde(rename = "type")]
     pub kind: CaseType,
     pub status: CaseStatus,
     pub owner: Option<String>,
     pub tags: Vec<String>,
+    /// External references (ticket ids, URLs). Carried in the list row so the
+    /// case list and filter queries can search by reference.
+    pub references: Vec<String>,
     pub automation_state: AutomationState,
     pub updated: Option<String>,
     /// Repo-relative path to the file, for Git operations and display.
@@ -173,7 +178,14 @@ pub fn list_suites(paths: &Paths) -> Result<Vec<SuiteTree>> {
         if !suite_yml.is_file() {
             continue;
         }
-        let suite: Suite = serde_yaml::from_str(&fs::read_to_string(&suite_yml)?)?;
+        let mut suite: Suite = serde_yaml::from_str(&fs::read_to_string(&suite_yml)?)?;
+        // Every path is built from the id (`suites/<id>/`, `sections/<id>.yml`),
+        // so the location wins over a contradicting `id:` field. Otherwise a
+        // hand-written or agent-written file makes rename, delete, reorder and
+        // move target a path that does not exist.
+        if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
+            suite.id = name.to_string();
+        }
 
         // sections
         let mut sections = Vec::new();
@@ -181,12 +193,23 @@ pub fn list_suites(paths: &Paths) -> Result<Vec<SuiteTree>> {
         if sections_dir.is_dir() {
             for s in fs::read_dir(&sections_dir)? {
                 let p = s?.path();
-                if p.extension().and_then(|e| e.to_str()) == Some("yml") {
-                    let section: Section = serde_yaml::from_str(&fs::read_to_string(&p)?)?;
-                    sections.push(section);
+                if p.extension().and_then(|e| e.to_str()) != Some("yml") {
+                    continue;
                 }
+                let Some(stem) = p.file_stem().and_then(|n| n.to_str()) else {
+                    continue;
+                };
+                // A folder whose YAML will not parse is skipped rather than
+                // failing the whole tree: its cases still show up under "No
+                // folder", where the tree keeps cases with a missing folder.
+                let Ok(mut section) = serde_yaml::from_str::<Section>(&fs::read_to_string(&p)?)
+                else {
+                    continue;
+                };
+                section.id = stem.to_string();
+                sections.push(section);
             }
-            sections.sort_by_key(|s| s.order);
+            sections.sort_by(|a, b| a.order.cmp(&b.order).then_with(|| a.id.cmp(&b.id)));
         }
 
         // case count
@@ -253,17 +276,23 @@ pub fn list_cases(paths: &Paths) -> Result<Vec<CaseSummary>> {
             title: front.title,
             suite: front.suite,
             section: front.section,
+            order: front.order,
             priority: front.priority,
             kind: front.kind,
             status: front.status,
             owner: front.owner,
             tags: front.tags,
+            references: front.references,
             automation_state: front.automation.state,
             updated: front.updated,
             path: rel,
             broken: false,
         });
     }
+    // A stable, suite-independent baseline. The manual `order` is relative to a
+    // single suite/section, so applying it here would interleave suites; the
+    // caller sorts for display, where the suite and section order is known too
+    // (see `sortCases` in src/lib/cases.ts).
     out.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(out)
 }
@@ -307,11 +336,13 @@ fn broken_summary(fm: &str, path: &Path, rel: String) -> CaseSummary {
         title: get("title").unwrap_or_else(|| "Unparseable front matter".to_string()),
         suite: suite.unwrap_or_default(),
         section: None,
+        order: None,
         priority: Priority::default(),
         kind: CaseType::default(),
         status: CaseStatus::default(),
         owner: None,
         tags: vec![],
+        references: vec![],
         automation_state: AutomationState::None,
         updated: None,
         path: rel,
@@ -415,6 +446,166 @@ pub fn delete_suite(paths: &Paths, id: &str) -> Result<Vec<String>> {
     Ok(removed)
 }
 
+/// Create a section (a folder inside a suite): `suites/<suite>/sections/<id>.yml`.
+/// Errors if the suite is missing or a section with that id already exists.
+pub fn create_section(paths: &Paths, suite: &str, section: &Section) -> Result<()> {
+    let dir = paths.suites_dir().join(suite);
+    if !dir.join("suite.yml").is_file() {
+        return Err(Error::Other(format!("suite not found: {suite}")));
+    }
+    let sections_dir = dir.join("sections");
+    fs::create_dir_all(&sections_dir)?;
+    let path = sections_dir.join(format!("{}.yml", section.id));
+    if path.exists() {
+        return Err(Error::Other(format!(
+            "a folder \"{}\" already exists in this suite",
+            section.name
+        )));
+    }
+    fs::write(&path, serde_yaml::to_string(section)?)?;
+    Ok(())
+}
+
+/// The `order` value for a new item appended after `existing`. Sparse (steps of
+/// 10) so it keeps working after a reorder, which renumbers from 10 upwards.
+/// Saturating: a hand-edited `order: 9223372036854775807` must not overflow.
+pub fn next_order(existing: impl IntoIterator<Item = i64>) -> i64 {
+    existing.into_iter().max().unwrap_or(0).saturating_add(10)
+}
+
+/// Resolve a requested order against the actual members of a group: the
+/// requested ids first (deduplicated), then any member the caller did not
+/// mention, in the order `members` arrives in (which callers pass already sorted
+/// the way the group is displayed, so an unmentioned member keeps its place).
+/// Errors on an id that is not a member, so a stale UI can never reorder
+/// something into the wrong suite or folder.
+fn resolved_order(members: Vec<String>, requested: &[String], scope: &str) -> Result<Vec<String>> {
+    let mut out: Vec<String> = Vec::new();
+    for id in requested {
+        if !members.contains(id) {
+            return Err(Error::Other(format!("{id} is not in {scope}")));
+        }
+        if !out.contains(id) {
+            out.push(id.clone());
+        }
+    }
+    let rest: Vec<String> = members.into_iter().filter(|m| !out.contains(m)).collect();
+    out.extend(rest);
+    Ok(out)
+}
+
+/// Persist a manual order for the suites, in the given sequence. Suites left out
+/// of `ids` keep their relative position after the listed ones.
+pub fn reorder_suites(paths: &Paths, ids: &[String]) -> Result<()> {
+    let members = list_suites(paths)?.into_iter().map(|s| s.id).collect();
+    for (i, id) in resolved_order(members, ids, "this project")?
+        .iter()
+        .enumerate()
+    {
+        let yml = paths.suites_dir().join(id).join("suite.yml");
+        let mut suite: Suite = serde_yaml::from_str(&fs::read_to_string(&yml)?)?;
+        let order = (i as i64 + 1) * 10;
+        if suite.order != order {
+            suite.order = order;
+            fs::write(&yml, serde_yaml::to_string(&suite)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// Persist a manual order for the sections of one suite, in the given sequence.
+pub fn reorder_sections(paths: &Paths, suite: &str, ids: &[String]) -> Result<()> {
+    let sections_dir = paths.suites_dir().join(suite).join("sections");
+    let members = list_suites(paths)?
+        .into_iter()
+        .find(|s| s.id == suite)
+        .ok_or_else(|| Error::Other(format!("suite not found: {suite}")))?
+        .sections
+        .into_iter()
+        .map(|s| s.id)
+        .collect();
+    for (i, id) in resolved_order(members, ids, suite)?.iter().enumerate() {
+        let yml = sections_dir.join(format!("{id}.yml"));
+        let mut section: Section = serde_yaml::from_str(&fs::read_to_string(&yml)?)?;
+        let order = (i as i64 + 1) * 10;
+        if section.order != order {
+            section.order = order;
+            fs::write(&yml, serde_yaml::to_string(&section)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// Persist a manual order for the cases of one suite/section, in the given
+/// sequence. Cases left out keep their relative position (by id) after the
+/// listed ones. Only files whose `order` actually changes are rewritten, so a
+/// drag that lands where it started leaves the working tree clean.
+pub fn reorder_cases(
+    paths: &Paths,
+    suite: &str,
+    section: Option<&str>,
+    ids: &[String],
+) -> Result<()> {
+    // No requested sequence means no requested change. Renumbering the whole
+    // group here would dirty every file in it for nothing.
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // Keep each case's own path from the listing rather than resolving it again
+    // by id: a reorder must never write to a different file than the one it
+    // counted. Broken cases are excluded: their front matter does not parse, so
+    // there is nothing to write an order into.
+    let mut group: Vec<(String, PathBuf, Option<i64>)> = list_cases(paths)?
+        .into_iter()
+        .filter(|c| !c.broken && c.suite == suite && c.section.as_deref() == section)
+        .map(|c| (c.id, paths.root.join(&c.path), c.order))
+        .collect();
+    // Put the group in its current display order, so a member the caller did not
+    // mention keeps its position rather than being renumbered into id order.
+    group.sort_by(|a, b| {
+        a.2.unwrap_or(i64::MAX)
+            .cmp(&b.2.unwrap_or(i64::MAX))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+    let scope = match section {
+        Some(s) => format!("{suite}/{s}"),
+        None => suite.to_string(),
+    };
+    // Two files in one group can carry the same id (see `id_collisions`). Which
+    // of them a position refers to is then undecidable, and guessing writes one
+    // file twice while skipping the other, leaving two cases with the same order.
+    // Refuse and let the user renumber the collision first.
+    if let Some((id, _, _)) = group
+        .iter()
+        .enumerate()
+        .find(|(i, (id, _, _))| group[..*i].iter().any(|(seen, _, _)| seen == id))
+        .map(|(_, row)| row)
+    {
+        return Err(Error::Other(format!(
+            "two cases in {scope} share the id {id}; renumber the duplicate before reordering"
+        )));
+    }
+    let members = group.iter().map(|(id, _, _)| id.clone()).collect();
+    for (i, id) in resolved_order(members, ids, &scope)?.iter().enumerate() {
+        let Some((_, path, _)) = group.iter().find(|(cid, _, _)| cid == id) else {
+            continue;
+        };
+        set_case_order(path, (i as i64 + 1) * 10)?;
+    }
+    Ok(())
+}
+
+/// Write a case file's `order` front-matter field, leaving the rest of the file
+/// (and its name) untouched. A no-op when the value already matches, so a drag
+/// that lands where it started does not dirty the working tree.
+fn set_case_order(path: &Path, order: i64) -> Result<()> {
+    let content = fs::read_to_string(path)?;
+    if let Some(patched) = case_file::set_order(&content, order)? {
+        fs::write(path, patched)?;
+    }
+    Ok(())
+}
+
 /// Rename a section's display name. The id (and thus the section filename and
 /// the `section:` references in case front matter) stays stable so nothing has
 /// to be rewritten. The change is left uncommitted for the user to review.
@@ -479,24 +670,47 @@ pub fn delete_section(paths: &Paths, suite: &str, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Move a case into another suite: rewrite `suite:` in the front matter and
-/// relocate the file, keeping its filename so Git can detect the rename.
-/// Automation links key on the case id and stay valid.
-pub fn move_case(paths: &Paths, id: &str, suite: &str) -> Result<TestCase> {
+/// Move a case into another suite and/or folder: rewrite `suite:`/`section:` in
+/// the front matter and, when the suite changes, relocate the file, keeping its
+/// filename so Git can detect the rename. Sections are metadata, not
+/// directories, so a folder change rewrites the file in place. Any manual order
+/// is dropped: the case lands at the end of its new group. Automation links key
+/// on the case id and stay valid.
+pub fn move_case(
+    paths: &Paths,
+    id: &str,
+    suite: &str,
+    section: Option<&str>,
+) -> Result<TestCase> {
     let old_path = case_path(paths, id)?;
     let mut case = case_file::parse(&fs::read_to_string(&old_path)?)?;
-    if case.front.suite == suite {
+    if case.front.suite == suite && case.front.section.as_deref() == section {
         return Ok(case);
     }
+    let same_suite = case.front.suite == suite;
     case.front.suite = suite.to_string();
-    case.front.section = None;
+    case.front.section = section.map(str::to_string);
+    case.front.order = None;
+    if same_suite {
+        fs::write(&old_path, case_file::serialize(&case)?)?;
+        return load_case(paths, id);
+    }
     let cases_dir = paths.suites_dir().join(suite).join("cases");
     fs::create_dir_all(&cases_dir)?;
     let file_name = old_path
         .file_name()
         .ok_or_else(|| Error::Other(format!("bad case path for {id}")))?
         .to_os_string();
-    fs::write(cases_dir.join(&file_name), case_file::serialize(&case)?)?;
+    let new_path = cases_dir.join(&file_name);
+    // Two files can carry the same id (see `id_collisions`), and they would want
+    // the same file name here. Refuse rather than overwrite a case.
+    if new_path.exists() {
+        return Err(Error::Other(format!(
+            "{suite} already has a file named {}; resolve the duplicate id first",
+            file_name.to_string_lossy()
+        )));
+    }
+    fs::write(&new_path, case_file::serialize(&case)?)?;
     fs::remove_file(&old_path)?;
     load_case(paths, id)
 }
@@ -513,6 +727,9 @@ pub fn duplicate_case(paths: &Paths, id: &str, suite: Option<&str>) -> Result<Te
         copy.front.section = None;
     }
     copy.front.automation = Automation::default();
+    // The copy lands at the end of its group rather than next to its source: a
+    // shared order value would make the pair's relative position arbitrary.
+    copy.front.order = None;
     copy.front.created = None;
     copy.front.updated = None;
     save_case(paths, &copy)
@@ -536,6 +753,7 @@ pub fn new_case(id: String, title: String, suite: String, body: &str) -> TestCas
             title,
             suite,
             section: None,
+            order: None,
             priority: Priority::default(),
             kind: CaseType::default(),
             status: CaseStatus::default(),

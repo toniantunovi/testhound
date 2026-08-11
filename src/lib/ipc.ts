@@ -102,10 +102,19 @@ export const api = {
   renameSuite: (id: string, name: string) =>
     invoke<void>("rename_suite", { id, name }),
   deleteSuite: (id: string) => invoke<void>("delete_suite", { id }),
+  createSection: (suite: string, name: string, parent?: string | null) =>
+    invoke<string>("create_section", { suite, name, parent: parent ?? null }),
   renameSection: (suite: string, id: string, name: string) =>
     invoke<void>("rename_section", { suite, id, name }),
   deleteSection: (suite: string, id: string) =>
     invoke<void>("delete_section", { suite, id }),
+  // Reordering always sends the group's full sequence, so the backend renumbers
+  // deterministically instead of interpreting a target index.
+  reorderSuites: (ids: string[]) => invoke<void>("reorder_suites", { ids }),
+  reorderSections: (suite: string, ids: string[]) =>
+    invoke<void>("reorder_sections", { suite, ids }),
+  reorderCases: (suite: string, section: string | null, ids: string[]) =>
+    invoke<void>("reorder_cases", { suite, section, ids }),
   listCases: () => invoke<CaseSummary[]>("list_cases"),
   getCase: (id: string) =>
     invoke<TestCase>("get_case", { id }).then(normalizeCase),
@@ -114,8 +123,10 @@ export const api = {
   createCase: (suite: string, title: string) =>
     invoke<TestCase>("create_case", { suite, title }).then(normalizeCase),
   deleteCase: (id: string) => invoke<void>("delete_case", { id }),
-  moveCase: (id: string, suite: string) =>
-    invoke<TestCase>("move_case", { id, suite }).then(normalizeCase),
+  moveCase: (id: string, suite: string, section?: string | null) =>
+    invoke<TestCase>("move_case", { id, suite, section: section ?? null }).then(
+      normalizeCase,
+    ),
   duplicateCase: (id: string, suite?: string | null) =>
     invoke<TestCase>("duplicate_case", { id, suite: suite ?? null }).then(
       normalizeCase,
