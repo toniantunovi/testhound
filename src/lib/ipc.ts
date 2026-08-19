@@ -263,6 +263,18 @@ export const api = {
     history: ChatMessage[];
   }) => invoke<void>("assistant_send", args),
   assistantStop: () => invoke<void>("assistant_stop"),
+
+  // The assistant terminal: a real pty in the repository, with the agent's own
+  // TUI in it. Bytes cross as base64 because a chunk boundary can land inside a
+  // UTF-8 character or an escape sequence.
+  termOpen: (cols: number, rows: number, agentId: string) =>
+    invoke<number>("term_open", { cols, rows, agentId }),
+  termWrite: (base64: string) => invoke<void>("term_write", { base64 }),
+  termResize: (cols: number, rows: number) =>
+    invoke<void>("term_resize", { cols, rows }),
+  termClose: () => invoke<void>("term_close"),
+  termCommand: (agentId: string) => invoke<string>("term_command", { agentId }),
+  termAgent: () => invoke<string | null>("term_agent"),
 };
 
 // ---- Playwright run lifecycle events -----------------------------------------
@@ -309,6 +321,19 @@ export const assistantEvents = {
   onFinished: (cb: (e: AssistantFinishedEvent) => void): Promise<UnlistenFn> =>
     listen<AssistantFinishedEvent>("assistant://finished", (e) => cb(e.payload)),
 };
+
+// ---- Assistant terminal events -----------------------------------------------
+// Raw pty output, and the one-shot notice that the shell behind it is gone.
+
+export interface TermData {
+  id: number;
+  base64: string;
+}
+
+export interface TermExit {
+  id: number;
+  code: number | null;
+}
 
 /** Normalize an IPC error (a plain string from the Rust side) to a message. */
 export function errMsg(e: unknown): string {

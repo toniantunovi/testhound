@@ -35,6 +35,14 @@ slug = "0.1"
 # Anonymous telemetry POST. rustls (no OpenSSL) to match the project's
 # no-OpenSSL stance (see git2 above). Only used to fire-and-forget events.
 ureq = { version = "2", default-features = false, features = ["tls"] }
+# The assistant terminal: a real pty with a real login shell in it (src/term).
+portable-pty = "0.9"
+# Terminal bytes cross the IPC boundary base64-encoded, because a chunk boundary
+# can land inside a UTF-8 character or an escape sequence.
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
 # This feature is used for production builds or when a dev server is not specified,

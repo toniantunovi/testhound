@@ -14,7 +14,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
-  Sparkles,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { useSync } from "@/lib/useSync";
@@ -326,10 +326,10 @@ export function RepoBar() {
         </kbd>
       </button>
 
-      {/* Assistant panel toggle */}
+      {/* Assistant panel toggle. A terminal glyph, because that is what opens. */}
       <button
         onClick={toggleAssistant}
-        title="Toggle assistant (⌘J)"
+        title="A terminal in this repository, with a coding agent already running (⌘J)"
         className={cn(
           "th-no-drag flex shrink-0 items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs font-medium transition-colors",
           assistantOpen
@@ -337,8 +337,11 @@ export function RepoBar() {
             : "border-border-subtle text-text-secondary hover:border-border-strong hover:text-text-primary",
         )}
       >
-        <Sparkles size={12} className={assistantOpen ? "" : "text-brand-accent"} />
+        <TerminalIcon size={12} className={assistantOpen ? "" : "text-brand-accent"} />
         Assistant
+        <kbd className="rounded bg-bg-surface-2 px-1 font-mono text-[10px] text-text-secondary">
+          ⌘J
+        </kbd>
       </button>
 
       {/* Sync */}

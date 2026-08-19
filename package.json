@@ -26,6 +26,8 @@
     "@tanstack/react-table": "^8.20.6",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@xterm/addon-fit": "^0.11",
+    "@xterm/xterm": "^6",
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "lucide-react": "^0.469.0",

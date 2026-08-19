@@ -15,6 +15,7 @@ use crate::merge::{self, Conflicts, IdCollision, Side};
 use crate::playwright::{self, PlaywrightInfo, TestTarget};
 use crate::repo::runs::{self, CreateRun, RunDetail, RunSummary};
 use crate::repo::{self, CaseSummary, Paths, SuiteTree};
+use crate::term::{self, Terminal};
 use crate::domain::{
     Configuration, IncludeMode, Milestone, Project, ResultSource, ResultStatus, Run, RunResult,
     RunState, Section, Suite, TestCase,
@@ -43,6 +44,9 @@ pub struct AppState {
     /// The active step-through preview session, if any. Only one runs at a time;
     /// starting a new one supersedes it.
     pub step: Arc<Mutex<Option<StepSession>>>,
+    /// The assistant terminal, if one is open. Held here rather than in the panel
+    /// so a running agent session survives hiding the panel or switching screens.
+    pub term: Mutex<Option<Terminal>>,
 }
 
 /// A live step-through preview: the socket back to the paused Playwright worker
@@ -1537,6 +1541,136 @@ pub async fn assistant_stop(state: tauri::State<'_, AppState>) -> Result<()> {
     let child = state.assistant_child.lock().unwrap().take();
     if let Some(mut child) = child {
         agent::kill_child(&mut child);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------- the terminal
+
+/// Where the standing context for a terminal session is written: inside the
+/// gitignored local folder, so it never lands in a commit and never needs a
+/// cleanup step. Rewritten on every open, because the preamble follows the
+/// project's own `automation/setup.md`.
+fn write_term_context(paths: &Paths) -> Result<String> {
+    let dir = paths.th.join(".testhound");
+    std::fs::create_dir_all(&dir)?;
+    let file = dir.join("assistant-context.md");
+    std::fs::write(&file, assistant::system_preamble(paths))?;
+    // Relative to the repo root, because that is the terminal's working directory
+    // and a relative path keeps the visible command line readable.
+    Ok(file
+        .strip_prefix(&paths.root)
+        .unwrap_or(&file)
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
+/// The line the panel shows before the shell has echoed it. Built in Rust so the
+/// UI cannot claim a different command than the one that runs.
+#[tauri::command]
+pub fn term_command(agent_id: String, state: tauri::State<AppState>) -> Result<String> {
+    let kind = AgentKind::from_id(&agent_id)
+        .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
+    let paths = state.paths()?;
+    let context = paths
+        .th
+        .join(".testhound")
+        .join("assistant-context.md")
+        .strip_prefix(&paths.root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| "assistant-context.md".to_string());
+    Ok(term::startup_command(kind, &context))
+}
+
+/// Open a terminal in the repository and type the agent's command into it.
+///
+/// Idempotent per session: calling this while one is running returns the running
+/// id, so a remount of the panel reattaches instead of leaving an orphaned shell
+/// behind. Switching agent is a `term_close` followed by this.
+#[tauri::command]
+pub fn term_open(
+    cols: u16,
+    rows: u16,
+    agent_id: String,
+    state: tauri::State<AppState>,
+    app: AppHandle,
+) -> Result<u64> {
+    let kind = AgentKind::from_id(&agent_id)
+        .ok_or_else(|| Error::Agent(format!("unknown agent: {agent_id}")))?;
+    let paths = state.paths()?;
+    let mut slot = state.term.lock().unwrap();
+    if let Some(t) = slot.as_ref() {
+        return Ok(t.id());
+    }
+    let context = write_term_context(&paths)?;
+    // The same test target Playwright runs get, so a run the agent starts from this
+    // terminal points at the same app with the same credentials.
+    let env = playwright::target_env(&playwright::load_target(&paths));
+    let data_app = app.clone();
+    let exit_app = app.clone();
+    let t = term::spawn(
+        &paths.root,
+        kind.id(),
+        &term::startup_command(kind, &context),
+        cols,
+        rows,
+        &env,
+        move |id, bytes| {
+            use base64::Engine as _;
+            let base64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let _ = data_app.emit("term://data", term::TermData { id, base64 });
+        },
+        move |id, code| {
+            let _ = exit_app.emit("term://exit", term::TermExit { id, code });
+        },
+    )?;
+    let id = t.id();
+    *slot = Some(t);
+    Ok(id)
+}
+
+/// Keystrokes and pasted text, as bytes. Base64 because a keypress can be a
+/// control byte that is not valid UTF-8 on its own.
+#[tauri::command]
+pub fn term_write(base64: String, state: tauri::State<AppState>) -> Result<()> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64.as_bytes())
+        .map_err(|e| Error::Agent(format!("malformed terminal input: {e}")))?;
+    let mut slot = state.term.lock().unwrap();
+    match slot.as_mut() {
+        Some(t) => t.write(&bytes),
+        None => Err(Error::Agent("no terminal is open".into())),
+    }
+}
+
+#[tauri::command]
+pub fn term_resize(cols: u16, rows: u16, state: tauri::State<AppState>) -> Result<()> {
+    let slot = state.term.lock().unwrap();
+    match slot.as_ref() {
+        Some(t) => t.resize(cols, rows),
+        // Not an error: the panel resizes on mount, possibly before it has opened one.
+        None => Ok(()),
+    }
+}
+
+/// The agent the running session was started for, or `None` if none is running.
+/// The panel uses it to notice that the picker no longer matches the shell.
+#[tauri::command]
+pub fn term_agent(state: tauri::State<AppState>) -> Option<String> {
+    state
+        .term
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|t| t.agent().to_string())
+}
+
+/// Kill the session. The next `term_open` starts a fresh one.
+#[tauri::command]
+pub fn term_close(state: tauri::State<AppState>) -> Result<()> {
+    if let Some(t) = state.term.lock().unwrap().take() {
+        t.kill();
     }
     Ok(())
 }

@@ -11,6 +11,7 @@ import { useAutoSync } from "@/lib/useAutoSync";
 import { useSession } from "@/store/session";
 import { useAssistant } from "@/store/assistant";
 import { usePrefs } from "@/store/prefs";
+import { cn } from "@/lib/utils";
 import { Dashboard } from "@/screens/Dashboard";
 import { Cases } from "@/screens/Cases";
 import { CaseEditor } from "@/screens/CaseEditor";
@@ -28,6 +29,7 @@ export function AppShell() {
   const view = useSession((s) => s.view);
   const togglePalette = useSession((s) => s.togglePalette);
   const toggleAssistant = useAssistant((s) => s.toggle);
+  const assistantDock = useAssistant((s) => s.dock);
   useRunEvents();
   useAutoSync();
 
@@ -54,21 +56,32 @@ export function AppShell() {
       <RepoBar />
       <div className="flex min-h-0 flex-1">
         <Sidebar />
-        <main className="min-w-0 flex-1 overflow-hidden bg-bg-base">
-          {view === "dashboard" && <Dashboard />}
-          {view === "cases" && <Cases />}
-          {view === "case-editor" && <CaseEditor />}
-          {view === "case-history" && <CaseHistory />}
-          {view === "runs" && <Runs />}
-          {view === "new-run" && <NewRun />}
-          {view === "run-view" && <RunView />}
-          {view === "automation" && <Automation />}
-          {view === "changes" && <Changes />}
-          {view === "merge" && <MergeView />}
-          {view === "reports" && <Reports />}
-          {view === "settings" && <Settings />}
-        </main>
-        <AssistantPanel />
+        {/* The assistant terminal docks beside the screen, not over it: the reason
+            to watch it run is watching the case list and the Changes panel change
+            next to it. Hiding the panel unmounts the view but leaves the pty running
+            in Rust and the scrollback in the module-level xterm, so ⌘J is free. */}
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1",
+            assistantDock === "bottom" ? "flex-col" : "flex-row",
+          )}
+        >
+          <main className="min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-base">
+            {view === "dashboard" && <Dashboard />}
+            {view === "cases" && <Cases />}
+            {view === "case-editor" && <CaseEditor />}
+            {view === "case-history" && <CaseHistory />}
+            {view === "runs" && <Runs />}
+            {view === "new-run" && <NewRun />}
+            {view === "run-view" && <RunView />}
+            {view === "automation" && <Automation />}
+            {view === "changes" && <Changes />}
+            {view === "merge" && <MergeView />}
+            {view === "reports" && <Reports />}
+            {view === "settings" && <Settings />}
+          </main>
+          <AssistantPanel />
+        </div>
       </div>
       <ActivityConsole />
       <CommandPalette />

@@ -12,6 +12,7 @@ pub mod lfs;
 pub mod merge;
 pub mod playwright;
 pub mod repo;
+pub mod term;
 
 use app::AppState;
 
@@ -128,6 +129,12 @@ pub fn run() {
             app::triage_failure,
             app::assistant_send,
             app::assistant_stop,
+            app::term_open,
+            app::term_write,
+            app::term_resize,
+            app::term_close,
+            app::term_command,
+            app::term_agent,
             app::list_conflicts,
             app::resolve_case_conflict,
             app::resolve_case_keep,
