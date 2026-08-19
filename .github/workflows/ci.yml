@@ -30,9 +30,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux build dependencies
+        # A stalled Ubuntu mirror hangs apt indefinitely, which burns the job's
+        # whole timeout on a step that normally takes 100 seconds. Bound each
+        # call and retry, so a bad mirror costs minutes instead of the build.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          for attempt in 1 2 3; do
+            sudo timeout 180 apt-get update \
+              -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+              && sudo timeout 420 apt-get install -y \
+                -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
+                libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+              && exit 0
+            echo "apt attempt $attempt failed or timed out; retrying"
+            sudo killall apt-get apt 2>/dev/null || true
+            sudo rm -f /var/lib/apt/lists/lock /var/cache/apt/archives/lock
+            sleep 15
+          done
+          echo "apt failed after 3 attempts"
+          exit 1
       - uses: dtolnay/rust-toolchain@stable
       - uses: swatinem/rust-cache@v2
         with:
