@@ -1,6 +1,6 @@
 [package]
 name = "testhound"
-version = "0.9.0"
+version = "0.10.0"
 description = "A Git-native, AI-powered test management desktop app"
 authors = ["Voldeq GmbH"]
 license = "MIT"
