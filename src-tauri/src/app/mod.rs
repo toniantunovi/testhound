@@ -442,6 +442,19 @@ pub async fn move_case(
     repo::move_case(&paths, &id, &suite, section.as_deref())
 }
 
+/// Set the same front-matter fields (priority, type, status) on many cases at
+/// once, for the case list's selection bar. Returns the ids that changed; cases
+/// already holding the value are left untouched, so a no-op bulk action does not
+/// dirty the working tree. The changes land in the working tree for review.
+#[tauri::command]
+pub async fn set_case_fields(
+    ids: Vec<String>,
+    fields: repo::CaseFields,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>> {
+    repo::set_case_fields(&state.paths()?, &ids, &fields)
+}
+
 /// Duplicate a case under a fresh id, optionally into another suite.
 #[tauri::command]
 pub async fn duplicate_case(

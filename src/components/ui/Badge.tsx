@@ -1,12 +1,15 @@
 import { cn } from "@/lib/utils";
 import type {
   AutomationState,
+  CaseStatus,
   Priority,
   ResultStatus,
   RunState,
 } from "@/lib/types";
 import {
   Archive,
+  Ban,
+  FileEdit,
   Check,
   CircleDashed,
   CircleDot,
@@ -55,6 +58,27 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
       <span className="capitalize">{priority}</span>
     </span>
   );
+}
+
+/** A case's lifecycle state, shown only when it is not the plain `active` one:
+ *  a list where every row said "Active" would carry no information, while a
+ *  draft or a deprecated case has to be recognizable at a glance. */
+export function CaseStatusBadge({ status }: { status: CaseStatus }) {
+  if (status === "draft") {
+    return (
+      <Badge className="shrink-0 border-status-drifted/25 bg-status-drifted/10 text-status-drifted">
+        <FileEdit size={11} /> Draft
+      </Badge>
+    );
+  }
+  if (status === "deprecated") {
+    return (
+      <Badge className="shrink-0 border-border-subtle bg-bg-surface-2 text-text-muted">
+        <Ban size={11} /> Deprecated
+      </Badge>
+    );
+  }
+  return null;
 }
 
 /** With `onClick` the badge becomes a link to the case's row in the

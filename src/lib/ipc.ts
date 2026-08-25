@@ -11,7 +11,9 @@ import type {
   BlameLine,
   ChatMessage,
   CaseCommitDiff,
+  CaseStatus,
   CaseSummary,
+  CaseType,
   CommitInfo,
   Configuration,
   Conflicts,
@@ -24,6 +26,7 @@ import type {
   LfsStatus,
   Milestone,
   PlaywrightInfo,
+  Priority,
   ProjectInfo,
   RepoContext,
   RepoInfo,
@@ -127,6 +130,12 @@ export const api = {
     invoke<TestCase>("move_case", { id, suite, section: section ?? null }).then(
       normalizeCase,
     ),
+  /** Set the same front-matter fields on many cases at once. Returns the ids
+   *  that changed; ones already holding the value are left untouched. */
+  setCaseFields: (
+    ids: string[],
+    fields: { priority?: Priority; type?: CaseType; status?: CaseStatus },
+  ) => invoke<string[]>("set_case_fields", { ids, fields }),
   duplicateCase: (id: string, suite?: string | null) =>
     invoke<TestCase>("duplicate_case", { id, suite: suite ?? null }).then(
       normalizeCase,

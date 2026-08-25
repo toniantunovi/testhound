@@ -12,7 +12,7 @@ use crate::domain::{
     Section, Suite, TestCase,
 };
 use crate::error::{Error, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -604,6 +604,102 @@ fn set_case_order(path: &Path, order: i64) -> Result<()> {
         fs::write(path, patched)?;
     }
     Ok(())
+}
+
+/// The front-matter fields a bulk edit can set, as the case list's selection bar
+/// sends them; a `None` leaves that field as it is. Only closed-vocabulary
+/// fields are offered: their values are bare words, so they can be written into
+/// the file without quoting or reformatting anything around them.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct CaseFields {
+    #[serde(default)]
+    pub priority: Option<Priority>,
+    #[serde(default, rename = "type")]
+    pub kind: Option<CaseType>,
+    #[serde(default)]
+    pub status: Option<CaseStatus>,
+}
+
+impl CaseFields {
+    /// The edits to apply: the front-matter key, the word to write, and the keys
+    /// a missing one may be inserted after, so a case that never carried the key
+    /// gains it in the documented order (docs/03-data-model.md) rather than
+    /// wherever it is convenient.
+    fn edits(&self) -> Result<Vec<(&'static str, String, &'static [&'static str])>> {
+        const AFTER_PRIORITY: &[&str] = &["order", "section", "suite"];
+        const AFTER_TYPE: &[&str] = &["priority", "order", "section", "suite"];
+        const AFTER_STATUS: &[&str] = &["type", "priority", "order", "section", "suite"];
+        let mut edits: Vec<(&'static str, String, &'static [&'static str])> = vec![];
+        if let Some(p) = &self.priority {
+            edits.push(("priority", yaml_word(p)?, AFTER_PRIORITY));
+        }
+        if let Some(k) = &self.kind {
+            edits.push(("type", yaml_word(k)?, AFTER_TYPE));
+        }
+        if let Some(st) = &self.status {
+            edits.push(("status", yaml_word(st)?, AFTER_STATUS));
+        }
+        Ok(edits)
+    }
+}
+
+/// A domain enum as the bare word it takes in front matter. Derived from the
+/// same serde renaming the parser reads, so the two cannot drift apart.
+fn yaml_word<T: Serialize>(value: &T) -> Result<String> {
+    Ok(serde_yaml::to_string(value)?.trim().to_string())
+}
+
+/// Set the same front-matter fields on every one of `ids`, one file at a time.
+/// Each file is edited line by line (see `case_file::set_scalar`), so a case
+/// that already holds the value is left byte-for-byte alone and nothing else in
+/// its front matter is reformatted. Returns the ids that actually changed.
+///
+/// A failure stops the batch where it is: the cases written before it keep their
+/// new values rather than being rolled back, and the caller reports the error so
+/// a partly applied change is never silent.
+pub fn set_case_fields(paths: &Paths, ids: &[String], fields: &CaseFields) -> Result<Vec<String>> {
+    let edits = fields.edits()?;
+    if ids.is_empty() || edits.is_empty() {
+        return Ok(vec![]);
+    }
+    // Take each case's path from the listing rather than resolving it by id
+    // again, the way a reorder does: a bulk write must never land in a different
+    // file than the one the list showed.
+    let known = list_cases(paths)?;
+    let mut changed = Vec::new();
+    for id in ids {
+        let mut matching = known.iter().filter(|c| &c.id == id);
+        let case = matching
+            .next()
+            .ok_or_else(|| Error::CaseNotFound(id.clone()))?;
+        // Two files can carry the same id (see `id_collisions`). Which of them
+        // the user ticked is undecidable, and writing one while leaving the other
+        // would show as a half-applied change.
+        if matching.next().is_some() {
+            return Err(Error::Other(format!(
+                "two cases share the id {id}; renumber the duplicate first"
+            )));
+        }
+        if case.broken {
+            return Err(Error::Other(format!(
+                "{id}'s front matter does not parse; fix the file before setting fields on it"
+            )));
+        }
+        let path = paths.root.join(&case.path);
+        let mut content = fs::read_to_string(&path)?;
+        let mut touched = false;
+        for (key, value, after) in &edits {
+            if let Some(patched) = case_file::set_scalar(&content, key, value, after)? {
+                content = patched;
+                touched = true;
+            }
+        }
+        if touched {
+            fs::write(&path, &content)?;
+            changed.push(id.clone());
+        }
+    }
+    Ok(changed)
 }
 
 /// Rename a section's display name. The id (and thus the section filename and

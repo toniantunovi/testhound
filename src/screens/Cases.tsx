@@ -6,6 +6,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Copy,
   FolderInput,
@@ -16,6 +17,7 @@ import {
   Pencil,
   Plus,
   Search,
+  SlidersHorizontal,
   SquarePen,
   Trash2,
   TriangleAlert,
@@ -23,7 +25,14 @@ import {
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { countBucket, track } from "@/lib/telemetry";
-import type { CaseSummary, Priority, Section, SuiteTree } from "@/lib/types";
+import type {
+  CaseStatus,
+  CaseSummary,
+  CaseType,
+  Priority,
+  Section,
+  SuiteTree,
+} from "@/lib/types";
 import {
   groupBySection,
   groupBySuite,
@@ -45,10 +54,63 @@ import {
 } from "@/lib/caseDrag";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
-import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
+import {
+  AutomationBadge,
+  CaseStatusBadge,
+  PriorityBadge,
+} from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 
 const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
+const TYPES: CaseType[] = [
+  "functional",
+  "regression",
+  "smoke",
+  "e2e",
+  "negative",
+  "a11y",
+  "perf",
+];
+const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
+
+/** The front-matter fields the selection bar can set in one go. Closed
+ *  vocabularies only: those are the ones a menu can offer without an editor. */
+type BulkFields = { priority?: Priority; type?: CaseType; status?: CaseStatus };
+
+/** One field the bulk menu offers: what to call it, what it accepts, how to read
+ *  it off a case (to show what the selection has in common) and the change a
+ *  picked value makes. */
+interface BulkField {
+  key: string;
+  label: string;
+  options: readonly string[];
+  of: (c: CaseSummary) => string;
+  patch: (value: string) => BulkFields;
+}
+
+const BULK_FIELDS: BulkField[] = [
+  {
+    key: "priority",
+    label: "Priority",
+    options: PRIORITIES,
+    of: (c) => c.priority,
+    patch: (v) => ({ priority: v as Priority }),
+  },
+  {
+    key: "type",
+    label: "Type",
+    options: TYPES,
+    of: (c) => c.type,
+    patch: (v) => ({ type: v as CaseType }),
+  },
+  {
+    key: "status",
+    label: "Status",
+    options: STATUSES,
+    of: (c) => c.status,
+    patch: (v) => ({ status: v as CaseStatus }),
+  },
+];
 
 /** Report a rejected write. Not `window.alert`, which this webview silently
  *  ignores: a refused move has to say so, all the more when it was a bulk one
@@ -150,6 +212,21 @@ export function Cases() {
     },
     onSuccess: invalidateCases,
     onError: reportError,
+  });
+
+  /** Set the same front-matter fields on every ticked case: one line edit per
+   *  file, so a case that already holds the value is left untouched and nothing
+   *  else in its front matter is reformatted. */
+  const setCaseFields = useMutation({
+    mutationFn: ({ ids, fields }: { ids: string[]; fields: BulkFields }) =>
+      api.setCaseFields(ids, fields),
+    onSuccess: invalidateCases,
+    onError: (e) => {
+      // A batch that failed part-way has already written the cases before it,
+      // so the list has to be refetched even though the action was refused.
+      invalidateCases();
+      reportError(e);
+    },
   });
 
   const reorderCases = useMutation({
@@ -341,6 +418,16 @@ export function Cases() {
     [selectableIds, selected],
   );
 
+  /** The ticked rows themselves, for the selection bar: what it counts and what
+   *  it reads the current field values off. */
+  const tickedCases = useMemo(
+    () =>
+      ticked
+        .map((id) => cases.find((c) => c.id === id))
+        .filter((c): c is CaseSummary => !!c),
+    [ticked, cases],
+  );
+
   // A case that a filter hid, or that a move carried out of this view, must not
   // stay ticked: a bulk action would then reach rows nobody can see.
   useEffect(() => {
@@ -379,6 +466,14 @@ export function Cases() {
   const movable = (ids: string[]) => {
     const broken = new Set(cases.filter((c) => c.broken).map((c) => c.id));
     return ids.filter((id) => !broken.has(id));
+  };
+
+  /** Set fields on every ticked case. The selection is kept: the rows stay where
+   *  they are, and setting a second field on the same cases is the usual next
+   *  step. A move clears it instead, because the rows leave the view. */
+  const applyToTicked = (fields: BulkFields) => {
+    const ids = movable(ticked);
+    if (ids.length > 0) setCaseFields.mutate({ ids, fields });
   };
 
   /** Cases were dropped into `section` of the selected suite, at the position
@@ -502,16 +597,21 @@ export function Cases() {
           </div>
         </div>
 
-        {/* Bulk actions for the ticked rows. Dragging the selection onto a
-            suite or folder does the same thing; this is the way that needs no
-            drag, and the only one when a filter hides the destination. */}
+        {/* Everything that can be done to the ticked rows, behind one menu:
+            setting the fields whose values come from a fixed list, and filing
+            them. Dragging the selection onto a suite or folder files it too;
+            the menu is the way that needs no drag, and the only one when a
+            filter hides the destination. Anything free-text (title, owner,
+            tags) stays a per-case edit. */}
         {ticked.length > 0 && (
-          <div className="flex items-center gap-3 border-b border-border-subtle bg-bg-surface/60 px-6 py-2">
-            <span className="text-sm text-text-secondary">
+          <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle bg-bg-surface/60 px-6 py-2">
+            <span className="mr-1 text-sm text-text-secondary">
               {ticked.length} selected
             </span>
-            <BulkMoveMenu
+            <BulkEditMenu
+              cases={tickedCases}
               suites={suites}
+              onSet={applyToTicked}
               onMove={(suite, section) => {
                 moveCases.mutate({ ids: movable(ticked), suite, section });
                 setSelected(new Set());
@@ -1010,9 +1110,7 @@ function MoveToList({
     ) : undefined;
   return (
     <>
-      <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
-        Move to
-      </div>
+      <MenuHeading>Move to</MenuHeading>
       {suites.map((s) => (
         <Fragment key={s.id}>
           <MenuItem
@@ -1035,34 +1133,136 @@ function MoveToList({
   );
 }
 
-/** File every ticked case at once, from the bulk bar above the table. */
-function BulkMoveMenu({
+/** Everything the ticked rows can be changed to, behind one button. Picking a
+ *  field drills into its values rather than opening a flyout, the way the row
+ *  menu drills into "Move to": one panel is always in front, so the menu works
+ *  the same with a trackpad, a touch screen and a keyboard.
+ *
+ *  The top level reads out what the selection has in common ("Status Mixed"),
+ *  so the menu says what the ticked cases are before it changes them. */
+function BulkEditMenu({
+  cases,
   suites,
+  onSet,
   onMove,
 }: {
+  /** The ticked cases: the values they share are what the menu reads out. */
+  cases: CaseSummary[];
   suites: SuiteTree[];
+  onSet: (fields: BulkFields) => void;
   onMove: (suite: string, section: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  /** The panel in front: a field's values, the suite list, or the top level. */
+  const [pane, setPane] = useState<BulkField | "move" | null>(null);
+
+  const close = () => {
+    setOpen(false);
+    setPane(null);
+  };
+  /** The value every ticked case carries, or undefined when they differ. */
+  const shared = (f: BulkField) =>
+    cases.length > 0 && cases.every((c) => f.of(c) === f.of(cases[0]))
+      ? f.of(cases[0])
+      : undefined;
+
   return (
     <div className="relative">
-      <Button variant="secondary" size="md" onClick={() => setOpen((o) => !o)}>
-        <FolderInput size={13} /> Move to suite or folder…
+      <Button
+        variant="secondary"
+        size="md"
+        className="gap-1.5"
+        onClick={() => (open ? close() : setOpen(true))}
+      >
+        <SlidersHorizontal size={13} /> Bulk edit
+        <ChevronDown size={13} className="opacity-70" />
       </Button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 top-full z-50 mt-1 max-h-72 w-56 overflow-auto rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
-            <MoveToList
-              suites={suites}
-              onMove={(suite, section) => {
-                setOpen(false);
-                onMove(suite, section);
-              }}
-            />
+          <div className="fixed inset-0 z-40" onClick={close} />
+          <div className="absolute left-0 top-full z-50 mt-1 max-h-80 w-64 overflow-auto rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
+            {pane === null ? (
+              <>
+                <MenuHeading>
+                  Set on {cases.length} case{cases.length === 1 ? "" : "s"}
+                </MenuHeading>
+                {BULK_FIELDS.map((f) => (
+                  <MenuItem
+                    key={f.key}
+                    label={f.label}
+                    trailing={
+                      <>
+                        <span className="capitalize text-text-muted">
+                          {shared(f) ?? "Mixed"}
+                        </span>
+                        <ChevronRight size={13} className="text-text-muted" />
+                      </>
+                    }
+                    onClick={() => setPane(f)}
+                  />
+                ))}
+                <div className="my-1 border-t border-border-subtle" />
+                <MenuItem
+                  icon={<FolderInput size={13} />}
+                  label="Move to suite or folder"
+                  trailing={<ChevronRight size={13} className="text-text-muted" />}
+                  onClick={() => setPane("move")}
+                />
+              </>
+            ) : (
+              <>
+                <MenuItem
+                  icon={<ChevronLeft size={13} />}
+                  label="Back"
+                  onClick={() => setPane(null)}
+                />
+                {pane === "move" ? (
+                  <MoveToList
+                    suites={suites}
+                    onMove={(suite, section) => {
+                      close();
+                      onMove(suite, section);
+                    }}
+                  />
+                ) : (
+                  <>
+                    <MenuHeading>Set {pane.label.toLowerCase()}</MenuHeading>
+                    {pane.options.map((o) => (
+                      <MenuItem
+                        key={o}
+                        label={o}
+                        capitalize
+                        // A spacer where the tick is not, so the values line up
+                        // in one column instead of shifting by a row.
+                        icon={
+                          shared(pane) === o ? (
+                            <Check size={12} className="text-brand-primary" />
+                          ) : (
+                            <span className="w-3" />
+                          )
+                        }
+                        onClick={() => {
+                          close();
+                          onSet(pane.patch(o));
+                        }}
+                      />
+                    ))}
+                  </>
+                )}
+              </>
+            )}
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** The small caps label above a group of menu items. */
+function MenuHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
+      {children}
     </div>
   );
 }
@@ -1072,6 +1272,8 @@ function MenuItem({
   label,
   danger,
   indent,
+  capitalize,
+  trailing,
   onClick,
 }: {
   icon?: React.ReactNode;
@@ -1079,6 +1281,10 @@ function MenuItem({
   danger?: boolean;
   /** A folder listed under its suite in the "Move to" list. */
   indent?: boolean;
+  /** A lowercase vocabulary word (`deprecated`, `smoke`) shown as a label. */
+  capitalize?: boolean;
+  /** Pushed to the right edge: the current value, a chevron into a submenu. */
+  trailing?: React.ReactNode;
   onClick: () => void;
 }) {
   return (
@@ -1093,7 +1299,14 @@ function MenuItem({
       )}
     >
       {icon}
-      <span className="min-w-0 truncate">{label}</span>
+      <span className={cn("min-w-0 truncate", capitalize && "capitalize")}>
+        {label}
+      </span>
+      {trailing && (
+        <span className="ml-auto flex shrink-0 items-center gap-1 text-xs">
+          {trailing}
+        </span>
+      )}
     </button>
   );
 }
@@ -1381,8 +1594,13 @@ function CaseTable({
                       <span className="truncate">{c.title}</span>
                     </span>
                   ) : (
-                    <span className="block max-w-[32rem] truncate" title={c.title}>
-                      {c.title}
+                    // Draft and deprecated cases carry a badge: a bulk status
+                    // change has to be visible in the list it was made from.
+                    <span className="flex max-w-[32rem] items-center gap-2">
+                      <span className="truncate" title={c.title}>
+                        {c.title}
+                      </span>
+                      <CaseStatusBadge status={c.status} />
                     </span>
                   )}
                 </td>

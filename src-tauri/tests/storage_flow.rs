@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 use testhound_lib::app::sample;
-use testhound_lib::domain::{AutomationState, Section};
+use testhound_lib::domain::{AutomationState, CaseStatus, Priority, Section};
 use testhound_lib::git;
-use testhound_lib::repo::{self, Paths};
+use testhound_lib::repo::{self, CaseFields, Paths};
 
 fn tmp_repo() -> PathBuf {
     // Parallel tests can read the same nanosecond; the counter keeps each repo
@@ -361,6 +361,88 @@ fn reordering_tolerates_broken_and_mislabeled_files() {
 
 /// The repo-relative path of a loaded case, derived from its suite and file name
 /// the same way `list_cases` reports it.
+/// Setting fields on a whole selection, the way the case list's selection bar
+/// does: the values land, a case that already holds them is not rewritten, and
+/// nothing else in the front matter is disturbed.
+#[test]
+fn bulk_field_edits_touch_only_the_fields_they_set() {
+    let root = tmp_repo();
+    let th = "testhound";
+    repo::scaffold(&root, "Acme Shop", th).unwrap();
+    let paths = Paths::new(&root, th);
+    sample::seed(&paths).unwrap();
+
+    let path_of = |id: &str| {
+        root.join(
+            repo::list_cases(&paths)
+                .unwrap()
+                .into_iter()
+                .find(|c| c.id == id)
+                .unwrap()
+                .path,
+        )
+    };
+
+    // A key this app does not model, plus a comment: a bulk edit must not be
+    // able to destroy either.
+    let first = path_of("TC-0001");
+    let content = std::fs::read_to_string(&first).unwrap();
+    std::fs::write(
+        &first,
+        content.replacen("suite:", "component: login # hand-added\nsuite:", 1),
+    )
+    .unwrap();
+
+    let fields = CaseFields {
+        priority: Some(Priority::Low),
+        kind: None,
+        status: Some(CaseStatus::Deprecated),
+    };
+    let ids = vec!["TC-0001".to_string(), "TC-0002".to_string()];
+    let changed = repo::set_case_fields(&paths, &ids, &fields).unwrap();
+    assert_eq!(changed, ids);
+
+    let after = repo::list_cases(&paths).unwrap();
+    for id in &ids {
+        let c = after.iter().find(|c| &c.id == id).unwrap();
+        assert_eq!(c.status, CaseStatus::Deprecated, "{id}");
+        assert_eq!(c.priority, Priority::Low, "{id}");
+    }
+    // The type was not part of the change, so it is whatever it was.
+    let text = std::fs::read_to_string(&first).unwrap();
+    assert!(text.contains("component: login # hand-added"));
+    assert!(text.contains("type: "), "the untouched keys are still there");
+
+    // Applying the same values again changes nothing at all: no ids reported,
+    // and the files are byte-for-byte what they were.
+    assert!(repo::set_case_fields(&paths, &ids, &fields)
+        .unwrap()
+        .is_empty());
+    assert_eq!(std::fs::read_to_string(&first).unwrap(), text);
+
+    // Setting nothing is not an error, and writes nothing.
+    assert!(repo::set_case_fields(&paths, &ids, &CaseFields::default())
+        .unwrap()
+        .is_empty());
+
+    // An id the repo does not have stops the batch rather than being skipped: a
+    // stale selection must say so instead of half-applying in silence.
+    assert!(repo::set_case_fields(&paths, &["TC-0900".into()], &fields).is_err());
+
+    // Nor is a case whose front matter will not parse written to.
+    let broken = root.join("testhound/suites/auth/cases/TC-0901-broken.md");
+    std::fs::write(
+        &broken,
+        "---\nid: TC-0901\ntitle: Broken\nsuite: auth\nautomation: linked\n---\n\n## Steps\n1. Go\n",
+    )
+    .unwrap();
+    let before = std::fs::read_to_string(&broken).unwrap();
+    assert!(repo::set_case_fields(&paths, &["TC-0901".into()], &fields).is_err());
+    assert_eq!(std::fs::read_to_string(&broken).unwrap(), before);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
 fn before_path(case: &testhound_lib::domain::TestCase) -> String {
     format!(
         "testhound/suites/{}/cases/{}-{}.md",

@@ -51,22 +51,28 @@ pub fn serialize(case: &TestCase) -> Result<String> {
     Ok(format!("---\n{yaml}---\n\n{body}\n"))
 }
 
-/// Set the front matter's `order:` to `order`, editing that one line in place and
-/// leaving the rest of the file byte-for-byte alone. Returns `None` when the file
-/// already says that. A trailing comment on the `order:` line itself is the one
-/// thing that does not survive, since that whole line is rewritten.
+/// Set the front matter's `<key>:` to `value`, editing that one line in place
+/// and leaving the rest of the file byte-for-byte alone. Returns `None` when the
+/// file already says that. A key the front matter does not have yet is inserted
+/// after the last of `after` that it does have, so the documented key order
+/// survives. A trailing comment on the key's own line is the one thing that does
+/// not survive, since that whole line is rewritten.
 ///
-/// Reordering rewrites every case in a group, so it must not go through
-/// parse/serialize: that would reformat the YAML of untouched cases and drop any
-/// front-matter key this app does not model, turning one drag into a noisy
-/// multi-file diff. Only a top-level `order:` counts, never an `order:` nested
+/// A reorder rewrites every case in a group and a bulk field change every case
+/// that was ticked, so neither may go through parse/serialize: that would
+/// reformat the YAML of files whose value already matched and drop any front
+/// matter key this app does not model, turning one action into a noisy
+/// multi-file diff. Only a top-level key counts, never the same name nested
 /// inside `automation:` or `custom:`.
+///
+/// `value` is written verbatim, so it has to be a scalar that needs no quoting:
+/// the callers pass numbers and lowercase enum words.
 ///
 /// Editing by line only holds while the lines it touches are single-line scalars.
 /// Front matter where they are not (a block scalar, a value on the following
-/// line, a second `order:` key) is refused rather than silently corrupted: the
-/// caller surfaces the error and the file is left alone.
-pub fn set_order(content: &str, order: i64) -> Result<Option<String>> {
+/// line, a second key of the same name) is refused rather than silently
+/// corrupted: the caller surfaces the error and the file is left alone.
+pub fn set_scalar(content: &str, key: &str, value: &str, after: &[&str]) -> Result<Option<String>> {
     fn bare(line: &str) -> &str {
         line.trim_start_matches('\u{feff}')
             .trim_end_matches(['\n', '\r'])
@@ -121,38 +127,40 @@ pub fn set_order(content: &str, order: i64) -> Result<Option<String>> {
         }
     };
 
-    let target = format!("order: {order}");
-    let orders: Vec<usize> = (1..close).filter(|&i| key_of(lines[i]) == "order").collect();
-    if orders.len() > 1 {
-        return Err(Error::InvalidFormat(
-            "case file front matter has more than one order key".into(),
-        ));
+    let target = format!("{key}: {value}");
+    let present: Vec<usize> = (1..close).filter(|&i| key_of(lines[i]) == key).collect();
+    if present.len() > 1 {
+        return Err(Error::InvalidFormat(format!(
+            "case file front matter has more than one {key} key"
+        )));
     }
-    let existing = orders.first().copied();
+    let existing = present.first().copied();
     if let Some(i) = existing {
         if !single_line_value(i) {
-            return Err(Error::InvalidFormat(
-                "case file's order value spans more than one line".into(),
-            ));
+            return Err(Error::InvalidFormat(format!(
+                "case file's {key} value spans more than one line"
+            )));
         }
         if bare(lines[i]).trim_end() == target {
             return Ok(None);
         }
     }
 
-    // Keep the documented key order: after `section:` when there is one, else
-    // after `suite:`. With neither (malformed front matter), go directly after the
-    // opening fence, which is always structurally safe, rather than appending at
-    // the end where the last line may be a block scalar's content.
+    // Keep the documented key order: after the last key of `after` the file has,
+    // which the callers list from the closest preceding key outwards. With none
+    // of them (malformed front matter), go directly after the opening fence,
+    // which is always structurally safe, rather than appending at the end where
+    // the last line may be a block scalar's content.
     let insert_after = match (1..close)
-        .filter(|&i| matches!(key_of(lines[i]), "section" | "suite"))
+        .filter(|&i| after.contains(&key_of(lines[i])))
         .max()
     {
         Some(i) if single_line_value(i) => i,
-        Some(_) => {
-            return Err(Error::InvalidFormat(
-                "case file's suite/section value spans more than one line".into(),
-            ))
+        Some(i) => {
+            return Err(Error::InvalidFormat(format!(
+                "case file's {} value spans more than one line",
+                key_of(lines[i])
+            )))
         }
         None => 0,
     };
@@ -178,6 +186,12 @@ pub fn set_order(content: &str, order: i64) -> Result<Option<String>> {
         }
     }
     Ok(Some(out))
+}
+
+/// Set the front matter's `order:`, the field a drag-reorder writes. See
+/// [`set_scalar`] for what an in-place edit does and does not touch.
+pub fn set_order(content: &str, order: i64) -> Result<Option<String>> {
+    set_scalar(content, "order", &order.to_string(), &["section", "suite"])
 }
 
 /// Stable content hash of the body, used for drift detection. Short hex prefix,
@@ -365,6 +379,53 @@ automation:
         let out = set_order(bom, 10).unwrap().unwrap();
         assert!(out.starts_with("\u{feff}---\norder: 10\n"));
         assert!(set_order(&out, 10).unwrap().is_none());
+    }
+
+    #[test]
+    fn set_scalar_replaces_a_key_or_inserts_it_in_the_documented_order() {
+        const AFTER_STATUS: &[&str] = &["type", "priority", "order", "section", "suite"];
+
+        // The key is there: its line is replaced and nothing around it moves.
+        let content = "\
+---
+id: TC-0007
+title: Add item to cart
+suite: checkout
+priority: high
+type: smoke
+status: active
+component: cart # hand-added
+---
+
+## Steps
+1. Open the product page
+";
+        let out = set_scalar(content, "status", "deprecated", AFTER_STATUS)
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("type: smoke\nstatus: deprecated\ncomponent:"));
+        assert!(out.contains("component: cart # hand-added"));
+        assert_eq!(out.lines().count(), content.lines().count());
+        assert_eq!(
+            parse(&out).unwrap().front.status,
+            crate::domain::CaseStatus::Deprecated
+        );
+        // Setting the value it already holds leaves the file (and the diff) alone.
+        assert!(set_scalar(&out, "status", "deprecated", AFTER_STATUS)
+            .unwrap()
+            .is_none());
+
+        // A file that never carried the key gains it after the last key it may
+        // follow, not at the end of the front matter.
+        let sparse = "---\nid: TC-1\ntitle: T\nsuite: s\npriority: high\ntags:\n- a\n---\n\nbody\n";
+        let out = set_scalar(sparse, "status", "draft", AFTER_STATUS)
+            .unwrap()
+            .unwrap();
+        assert!(out.contains("priority: high\nstatus: draft\ntags:"));
+        assert_eq!(
+            parse(&out).unwrap().front.status,
+            crate::domain::CaseStatus::Draft
+        );
     }
 
     #[test]

@@ -87,6 +87,7 @@ pub fn run() {
             app::create_case,
             app::delete_case,
             app::move_case,
+            app::set_case_fields,
             app::duplicate_case,
             app::git_status,
             app::list_branches,
