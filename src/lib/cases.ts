@@ -133,19 +133,20 @@ export function groupBySuite(
   return [...groups.values()];
 }
 
-/** The group's ids after moving `dragId` next to `targetId`. Used for both drag
- *  and drop and the Move up/down menu items: the whole group's new order is what
- *  gets sent, so the backend never has to guess an index. */
+/** The group's ids after moving `dragIds` next to `targetId`, keeping the
+ *  dragged cases in the order they were shown in. The whole group's new order is
+ *  what gets sent, so the backend never has to guess an index. */
 export function reorderIds(
   groupIds: string[],
-  dragId: string,
+  dragIds: string[],
   targetId: string,
   after: boolean,
 ): string[] {
-  const rest = groupIds.filter((id) => id !== dragId);
+  const dragged = new Set(dragIds);
+  const rest = groupIds.filter((id) => !dragged.has(id));
   const at = rest.indexOf(targetId);
-  if (at === -1) return [...rest, dragId];
-  rest.splice(at + (after ? 1 : 0), 0, dragId);
+  if (at === -1) return [...rest, ...dragIds];
+  rest.splice(at + (after ? 1 : 0), 0, ...dragIds);
   return rest;
 }
 

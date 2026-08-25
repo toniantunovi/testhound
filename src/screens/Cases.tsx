@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import {
   ArrowDown,
   ArrowUp,
@@ -34,6 +34,15 @@ import {
   sortCases,
   type CaseGroup,
 } from "@/lib/cases";
+import {
+  groupTarget,
+  rowTarget,
+  startCaseDrag,
+  treeTarget,
+  useCaseDrag,
+  useDragPointer,
+  type CaseDropTarget,
+} from "@/lib/caseDrag";
 import { useSession } from "@/store/session";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
@@ -41,18 +50,16 @@ import { Button } from "@/components/ui/Button";
 
 const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
 
-/** Drag payload for a case row: the case id. A custom type (rather than
- *  `text/plain`) lets drop targets accept case drags only, and lets the tree and
- *  the table share one drag without any state between them.
- *
- *  Dragging is an accelerator, never the only way: the row menu offers Move
- *  up/down and Move to suite or folder, because the webview's OS-level drag-drop
- *  handling (which the assistant panel needs for file drops) can swallow
- *  in-page HTML5 drags on some platforms. */
-const CASE_MIME = "application/x-testhound-case";
+/** Report a rejected write. Not `window.alert`, which this webview silently
+ *  ignores: a refused move has to say so, all the more when it was a bulk one
+ *  that may have moved some cases before it stopped. */
+const reportError = (e: unknown) =>
+  void message(errMsg(e), { title: "TestHound", kind: "error" });
 
-const isCaseDrag = (e: React.DragEvent) =>
-  e.dataTransfer.types.includes(CASE_MIME);
+// Dragging a case is an accelerator, never the only way: the row menu offers
+// Move up/down and Move to suite or folder for anyone who would rather not drag,
+// and for when a filter rules dragging out. The drag itself runs on pointer
+// events rather than HTML5 drag and drop, for the reason in src/lib/caseDrag.ts.
 
 export function Cases() {
   const selectedSuite = useSession((s) => s.selectedSuite);
@@ -65,6 +72,14 @@ export function Cases() {
   const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
   /** Case shown in the preview panel on the right (single click). */
   const [previewId, setPreviewId] = useState<string | null>(null);
+  /** Cases ticked for a bulk move. */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  /** The row a shift-click ranges from, with the selection as it stood when that
+   *  row was ticked: a shift-click replaces its own previous range instead of
+   *  piling a second one on top, so a range can be shrunk as well as grown. */
+  const [anchor, setAnchor] = useState<{ id: string; base: Set<string> } | null>(
+    null,
+  );
 
   const { data: suites = [] } = useQuery({
     queryKey: ["suites"],
@@ -101,7 +116,7 @@ export function Cases() {
       if (previewId === id) setPreviewId(null);
       invalidateCases();
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const duplicateCase = useMutation({
@@ -110,29 +125,31 @@ export function Cases() {
       invalidateCases();
       setPreviewId(copy.id);
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
-  /** Move a case into a suite/folder. `order`, when given, is the destination
-   *  group's full sequence after the move, so a drag lands the case exactly
-   *  where it was dropped instead of at the end. */
-  const moveCase = useMutation({
+  /** Move cases into a suite/folder, one write per case: the backend moves one
+   *  file at a time, and a failure part-way should leave the cases before it
+   *  moved rather than roll the lot back. `order`, when given, is the
+   *  destination group's full sequence afterwards, so a drop lands them where
+   *  they fell instead of at the end. */
+  const moveCases = useMutation({
     mutationFn: async ({
-      id,
+      ids,
       suite,
       section,
       order,
     }: {
-      id: string;
+      ids: string[];
       suite: string;
       section: string | null;
       order?: string[];
     }) => {
-      await api.moveCase(id, suite, section);
+      for (const id of ids) await api.moveCase(id, suite, section);
       if (order) await api.reorderCases(suite, section, order);
     },
     onSuccess: invalidateCases,
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const reorderCases = useMutation({
@@ -146,7 +163,7 @@ export function Cases() {
       ids: string[];
     }) => api.reorderCases(suite, section, ids),
     onSuccess: invalidateCases,
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const reorderSuites = useMutation({
@@ -155,7 +172,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["suites"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const reorderSections = useMutation({
@@ -165,7 +182,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["suites"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const createSection = useMutation({
@@ -176,7 +193,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["git-status"] });
       selectSuite(suite, id);
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const createSuite = useMutation({
@@ -186,7 +203,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["git-status"] });
       selectSuite(id, null);
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const renameSuite = useMutation({
@@ -196,7 +213,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["suites"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const deleteSuite = useMutation({
@@ -206,7 +223,7 @@ export function Cases() {
       setPreviewId(null);
       invalidateCases();
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const renameSection = useMutation({
@@ -216,7 +233,7 @@ export function Cases() {
       qc.invalidateQueries({ queryKey: ["suites"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const deleteSection = useMutation({
@@ -227,7 +244,7 @@ export function Cases() {
         selectSuite(suite, null);
       invalidateCases();
     },
-    onError: (e) => window.alert(errMsg(e)),
+    onError: reportError,
   });
 
   const confirmDeleteSuite = async (s: SuiteTree) => {
@@ -308,21 +325,113 @@ export function Cases() {
       )
       .map((x) => x.id);
 
-  /** A case was dropped into `section` of the selected suite, at the position
-   *  described by `ids`. Same group: a reorder. Different group: a move that
-   *  also carries the new order. */
-  const dropCaseInGroup = (
-    caseId: string,
+  /** The rows that can be ticked, in the order they are shown: what "select all"
+   *  covers, what a shift-click ranges over, and the order a multi-case drag
+   *  keeps. Broken cases are left out because nothing can be done with them in
+   *  bulk: see `movable`. */
+  const selectableIds = useMemo(
+    () =>
+      groups.flatMap((g) => g.cases.filter((c) => !c.broken).map((c) => c.id)),
+    [groups],
+  );
+
+  /** The ticked cases, in display order. */
+  const ticked = useMemo(
+    () => selectableIds.filter((id) => selected.has(id)),
+    [selectableIds, selected],
+  );
+
+  // A case that a filter hid, or that a move carried out of this view, must not
+  // stay ticked: a bulk action would then reach rows nobody can see.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const visible = new Set(selectableIds);
+      const next = new Set([...prev].filter((id) => visible.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [selectableIds]);
+
+  /** Tick or untick a row. A shift-click covers everything between it and the
+   *  anchor, the way a file list does: the anchor stays put, so dragging the
+   *  shift-click back over the range unticks what it passes. */
+  const toggleSelected = (id: string, range: boolean) => {
+    const to = selectableIds.indexOf(id);
+    const from = anchor ? selectableIds.indexOf(anchor.id) : -1;
+    if (range && anchor && from !== -1 && to !== -1) {
+      const [a, b] = from < to ? [from, to] : [to, from];
+      setSelected(
+        new Set([...anchor.base, ...selectableIds.slice(a, b + 1)]),
+      );
+      return;
+    }
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setSelected(next);
+    setAnchor({ id, base: next });
+  };
+
+  /** Of `ids`, the ones the backend can actually refile. A broken case has front
+   *  matter that will not parse, so `move_case` cannot rewrite it and
+   *  `reorder_cases` refuses a sequence naming it: leaving it out keeps one bad
+   *  file from failing a whole batch. */
+  const movable = (ids: string[]) => {
+    const broken = new Set(cases.filter((c) => c.broken).map((c) => c.id));
+    return ids.filter((id) => !broken.has(id));
+  };
+
+  /** Cases were dropped into `section` of the selected suite, at the position
+   *  described by `ids`. Whatever already lives there is only reordered; the
+   *  rest is a move that carries the new order with it. */
+  const dropCasesInGroup = (
+    caseIds: string[],
     section: string | null,
     ids: string[],
   ) => {
-    const c = cases.find((x) => x.id === caseId);
-    if (!c || !activeSuite) return;
-    if (c.suite === activeSuite.id && (c.section ?? null) === section) {
+    if (!activeSuite) return;
+    const elsewhere = caseIds.filter((id) => {
+      const c = cases.find((x) => x.id === id);
+      return c && (c.suite !== activeSuite.id || (c.section ?? null) !== section);
+    });
+    if (elsewhere.length === 0) {
       reorderCases.mutate({ suite: activeSuite.id, section, ids });
     } else {
-      moveCase.mutate({ id: caseId, suite: activeSuite.id, section, order: ids });
+      moveCases.mutate({
+        ids: elsewhere,
+        suite: activeSuite.id,
+        section,
+        order: ids,
+      });
     }
+  };
+
+  /** A drag was released. The tree files the cases into a suite or folder; a row
+   *  or a group header inside the selected suite also places them. */
+  const dropCasesOn = (target: CaseDropTarget, dragged: string[]) => {
+    const caseIds = movable(dragged);
+    if (caseIds.length === 0) return;
+    if (target.kind === "tree") {
+      moveCases.mutate({
+        ids: caseIds,
+        suite: target.suite,
+        section: target.section,
+      });
+      return;
+    }
+    const group =
+      target.kind === "row"
+        ? groups.find((g) => g.cases.some((c) => c.id === target.id))
+        : groups.find((g) => g.key === target.key);
+    if (!group) return;
+    const order =
+      target.kind === "row"
+        ? reorderIds(orderableIds(group), caseIds, target.id, target.after)
+        : [
+            ...orderableIds(group).filter((id) => !caseIds.includes(id)),
+            ...caseIds,
+          ];
+    dropCasesInGroup(caseIds, group.sectionId, order);
   };
 
   const automated = filtered.filter(
@@ -356,8 +465,6 @@ export function Cases() {
         onCreateSection={(suite, name) => createSection.mutate({ suite, name })}
         onReorderSuites={(ids) => reorderSuites.mutate(ids)}
         onReorderSections={(suite, ids) => reorderSections.mutate({ suite, ids })}
-        onDropCase={(suite, section, caseId) =>
-          moveCase.mutate({ id: caseId, suite, section })}
         creating={createSuite.isPending}
       />
 
@@ -395,6 +502,30 @@ export function Cases() {
           </div>
         </div>
 
+        {/* Bulk actions for the ticked rows. Dragging the selection onto a
+            suite or folder does the same thing; this is the way that needs no
+            drag, and the only one when a filter hides the destination. */}
+        {ticked.length > 0 && (
+          <div className="flex items-center gap-3 border-b border-border-subtle bg-bg-surface/60 px-6 py-2">
+            <span className="text-sm text-text-secondary">
+              {ticked.length} selected
+            </span>
+            <BulkMoveMenu
+              suites={suites}
+              onMove={(suite, section) => {
+                moveCases.mutate({ ids: movable(ticked), suite, section });
+                setSelected(new Set());
+              }}
+            />
+            <button
+              onClick={() => setSelected(new Set())}
+              className="text-sm text-text-muted hover:text-text-primary"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+
         {/* Table */}
         <div className="min-h-0 flex-1 overflow-auto">
           {sorted.length === 0 ? (
@@ -407,13 +538,20 @@ export function Cases() {
               suites={suites}
               showGroupHeaders={!selectedSection}
               reorderable={reorderable}
-              selectedId={previewId}
-              onSelect={(id) => setPreviewId(id)}
+              previewId={previewId}
+              selected={selected}
+              ticked={ticked}
+              onPreview={(id) => setPreviewId(id)}
+              onToggleSelected={toggleSelected}
+              onSelectAll={(all) => {
+                setSelected(all ? new Set(selectableIds) : new Set());
+                setAnchor(null);
+              }}
               onOpen={(id) => openCase(id)}
               onDuplicate={(c) => duplicateCase.mutate(c.id)}
               onMove={(c, suite, section) =>
-                moveCase.mutate({ id: c.id, suite, section })}
-              onDrop={dropCaseInGroup}
+                moveCases.mutate({ ids: [c.id], suite, section })}
+              onDropCases={dropCasesOn}
               onNudge={(c, delta) => {
                 const ids = nudgeIds(groupIdsFor(c), c.id, delta);
                 if (ids)
@@ -436,6 +574,26 @@ export function Cases() {
           onOpen={() => openCase(previewId)}
         />
       )}
+
+      <CaseDragGhost />
+    </div>
+  );
+}
+
+/** The dragged case's title, following the cursor. Its own component so the
+ *  pointer position re-renders this alone and not the whole screen, and
+ *  `pointer-events-none` so it never hides the target underneath it. */
+function CaseDragGhost() {
+  const label = useCaseDrag((s) => (s.dragIds.length ? s.label : null));
+  const x = useDragPointer((s) => s.x);
+  const y = useDragPointer((s) => s.y);
+  if (!label) return null;
+  return (
+    <div
+      style={{ left: x + 12, top: y + 12 }}
+      className="pointer-events-none fixed z-50 max-w-[16rem] truncate rounded-control border border-border-subtle bg-bg-surface-2 px-2 py-1 text-xs text-text-primary shadow-lg"
+    >
+      {label}
     </div>
   );
 }
@@ -505,7 +663,6 @@ function SuiteTreeNav({
   onCreateSection,
   onReorderSuites,
   onReorderSections,
-  onDropCase,
   creating,
 }: {
   suites: SuiteTree[];
@@ -521,7 +678,6 @@ function SuiteTreeNav({
   onCreateSection: (suite: string, name: string) => void;
   onReorderSuites: (ids: string[]) => void;
   onReorderSections: (suite: string, ids: string[]) => void;
-  onDropCase: (suite: string, section: string | null, caseId: string) => void;
   creating: boolean;
 }) {
   const [adding, setAdding] = useState(false);
@@ -543,6 +699,20 @@ function SuiteTreeNav({
       prev.has(selectedSuite) ? prev : new Set(prev).add(selectedSuite),
     );
   }, [selectedSuite]);
+
+  // Hovering a collapsed suite mid-drag opens it, so a case can be filed into a
+  // folder that was not on screen when the drag started.
+  const hovered = useCaseDrag((s) =>
+    s.dragIds.length && s.target?.kind === "tree" ? s.target.suite : null,
+  );
+  useEffect(() => {
+    if (!hovered || expanded.has(hovered)) return;
+    const timer = setTimeout(
+      () => setExpanded((prev) => new Set(prev).add(hovered)),
+      500,
+    );
+    return () => clearTimeout(timer);
+  }, [hovered, expanded]);
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -621,7 +791,7 @@ function SuiteTreeNav({
                   onSelect(s.id, null);
                   if (s.sections.length > 0) setExpanded((p) => new Set(p).add(s.id));
                 }}
-                onDropCase={(caseId) => onDropCase(s.id, null, caseId)}
+                dropSuite={s.id}
                 menu={
                   <RowMenu
                     title="Suite actions"
@@ -658,7 +828,8 @@ function SuiteTreeNav({
                     indent
                     active={selectedSuite === s.id && selectedSection === sec.id}
                     onClick={() => onSelect(s.id, sec.id)}
-                    onDropCase={(caseId) => onDropCase(s.id, sec.id, caseId)}
+                    dropSuite={s.id}
+                    dropSection={sec.id}
                     menu={
                       <RowMenu
                         title="Folder actions"
@@ -820,6 +991,82 @@ function RowMenu({
   );
 }
 
+/** Every suite with its folders indented under it: the places a case can be
+ *  moved to. Shared by the row menu and the bulk bar so both offer the same
+ *  destinations in the same order. */
+function MoveToList({
+  suites,
+  here,
+  onMove,
+}: {
+  suites: SuiteTree[];
+  /** Marks where the case already sits, when there is a single one. */
+  here?: (suite: string, section: string | null) => boolean;
+  onMove: (suite: string, section: string | null) => void;
+}) {
+  const mark = (suite: string, section: string | null) =>
+    here?.(suite, section) ? (
+      <Check size={12} className="text-brand-primary" />
+    ) : undefined;
+  return (
+    <>
+      <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
+        Move to
+      </div>
+      {suites.map((s) => (
+        <Fragment key={s.id}>
+          <MenuItem
+            label={s.name}
+            icon={mark(s.id, null)}
+            onClick={() => onMove(s.id, null)}
+          />
+          {s.sections.map((sec) => (
+            <MenuItem
+              key={sec.id}
+              label={sec.name}
+              indent
+              icon={mark(s.id, sec.id)}
+              onClick={() => onMove(s.id, sec.id)}
+            />
+          ))}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
+/** File every ticked case at once, from the bulk bar above the table. */
+function BulkMoveMenu({
+  suites,
+  onMove,
+}: {
+  suites: SuiteTree[];
+  onMove: (suite: string, section: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <Button variant="secondary" size="md" onClick={() => setOpen((o) => !o)}>
+        <FolderInput size={13} /> Move to suite or folder…
+      </Button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 top-full z-50 mt-1 max-h-72 w-56 overflow-auto rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
+            <MoveToList
+              suites={suites}
+              onMove={(suite, section) => {
+                setOpen(false);
+                onMove(suite, section);
+              }}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function MenuItem({
   icon,
   label,
@@ -860,7 +1107,8 @@ function TreeRow({
   expanded,
   onToggle,
   onClick,
-  onDropCase,
+  dropSuite,
+  dropSection,
   menu,
 }: {
   label: string;
@@ -871,39 +1119,26 @@ function TreeRow({
   expanded?: boolean;
   onToggle?: () => void;
   onClick: () => void;
-  /** Accept a case dragged from the table: files it into this suite/folder. */
-  onDropCase?: (caseId: string) => void;
+  /** The suite (and folder) a case dropped here is filed into. Rows without a
+   *  suite, such as "All cases", are not drop targets. */
+  dropSuite?: string;
+  dropSection?: string;
   menu?: React.ReactNode;
 }) {
-  const [dropTarget, setDropTarget] = useState(false);
+  const dropTarget = useCaseDrag(
+    (s) =>
+      !!dropSuite &&
+      s.target?.kind === "tree" &&
+      s.target.suite === dropSuite &&
+      s.target.section === (dropSection ?? null),
+  );
   return (
     <div
       onClick={onClick}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => e.key === "Enter" && onClick()}
-      onDragOver={
-        onDropCase
-          ? (e) => {
-              if (!isCaseDrag(e)) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-              setDropTarget(true);
-            }
-          : undefined
-      }
-      onDragLeave={onDropCase ? () => setDropTarget(false) : undefined}
-      onDrop={
-        onDropCase
-          ? (e) => {
-              if (!isCaseDrag(e)) return;
-              e.preventDefault();
-              setDropTarget(false);
-              const id = e.dataTransfer.getData(CASE_MIME);
-              if (id) onDropCase(id);
-            }
-          : undefined
-      }
+      {...(dropSuite ? treeTarget(dropSuite, dropSection ?? null) : {})}
       className={cn(
         "group flex w-full cursor-pointer items-center gap-1 rounded-control py-1.5 pr-2 text-sm transition-colors",
         indent ? "pl-7" : "pl-2",
@@ -943,12 +1178,16 @@ function CaseTable({
   suites,
   showGroupHeaders,
   reorderable,
-  selectedId,
-  onSelect,
+  previewId,
+  selected,
+  ticked,
+  onPreview,
+  onToggleSelected,
+  onSelectAll,
   onOpen,
   onDuplicate,
   onMove,
-  onDrop,
+  onDropCases,
   onNudge,
   onDelete,
 }: {
@@ -959,62 +1198,48 @@ function CaseTable({
   showGroupHeaders: boolean;
   /** Whether dropping between rows can be honored: see `reorderable` in Cases. */
   reorderable: boolean;
-  selectedId: string | null;
-  onSelect: (id: string) => void;
+  /** The case open in the preview panel, highlighted but not ticked. */
+  previewId: string | null;
+  /** The ticked cases, and the same set in display order. */
+  selected: Set<string>;
+  ticked: string[];
+  onPreview: (id: string) => void;
+  onToggleSelected: (id: string, range: boolean) => void;
+  onSelectAll: (all: boolean) => void;
   onOpen: (id: string) => void;
   onDuplicate: (c: CaseSummary) => void;
   onMove: (c: CaseSummary, suite: string, section: string | null) => void;
-  /** A case was dropped into `section`; `ids` is that group's new full order. */
-  onDrop: (caseId: string, section: string | null, ids: string[]) => void;
+  /** A drag was released over `target`. */
+  onDropCases: (target: CaseDropTarget, caseIds: string[]) => void;
   onNudge: (c: CaseSummary, delta: -1 | 1) => void;
   onDelete: (c: CaseSummary) => void;
 }) {
   const openAutomation = useSession((s) => s.openAutomation);
-  /** The case being dragged, so its row can be dimmed. */
-  const [dragId, setDragId] = useState<string | null>(null);
-  /** Row the pointer is over mid-drag, and the edge it would land on. */
-  const [over, setOver] = useState<{ id: string; after: boolean } | null>(null);
-  /** Folder header the pointer is over mid-drag (drops at the end of it). */
-  const [overGroup, setOverGroup] = useState<string | null>(null);
+  /** The cases being dragged, so their rows can be dimmed. */
+  const dragIds = useCaseDrag((s) => s.dragIds);
+  /** What the drag would land on: a row edge, or a group header. Row and group
+   *  targets are only marked while `reorderable`, so this is null otherwise. */
+  const target = useCaseDrag((s) => s.target);
+  const over = target?.kind === "row" ? target : null;
+  const overGroup = target?.kind === "group" ? target.key : null;
+
+  // A drag outlives the render that started it, and a sync can refresh the
+  // cases underneath it. Going through a ref means the drop is worked out from
+  // the groups as they stand when the pointer comes up.
+  const dropRef = useRef(onDropCases);
+  useEffect(() => {
+    dropRef.current = onDropCases;
+  });
+  const drop = (landing: CaseDropTarget, ids: string[]) =>
+    dropRef.current(landing, ids);
 
   const headers = showGroupHeaders && groups.length > 1;
   const columns = 11;
-
-  const acceptRow = (e: React.DragEvent, id: string) => {
-    // The drag payload is unreadable until the drop, so the row being dragged is
-    // recognized by state instead: no insertion marker on itself.
-    if (!reorderable || !isCaseDrag(e) || dragId === id) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    const box = e.currentTarget.getBoundingClientRect();
-    setOverGroup(null);
-    setOver({ id, after: e.clientY > box.top + box.height / 2 });
-  };
-
-  const dropOnRow = (e: React.DragEvent, group: CaseGroup, id: string) => {
-    if (!reorderable || !isCaseDrag(e)) return;
-    e.preventDefault();
-    const box = e.currentTarget.getBoundingClientRect();
-    const after = e.clientY > box.top + box.height / 2;
-    setOver(null);
-    const dragged = e.dataTransfer.getData(CASE_MIME);
-    if (!dragged || dragged === id) return;
-    onDrop(
-      dragged,
-      group.sectionId,
-      reorderIds(orderableIds(group), dragged, id, after),
-    );
-  };
-
-  const dropOnGroup = (e: React.DragEvent, group: CaseGroup) => {
-    if (!isCaseDrag(e)) return;
-    e.preventDefault();
-    setOverGroup(null);
-    const dragged = e.dataTransfer.getData(CASE_MIME);
-    if (!dragged) return;
-    const ids = orderableIds(group).filter((id) => id !== dragged);
-    onDrop(dragged, group.sectionId, [...ids, dragged]);
-  };
+  const selectable = groups.reduce(
+    (n, g) => n + g.cases.filter((c) => !c.broken).length,
+    0,
+  );
+  const allTicked = selectable > 0 && ticked.length === selectable;
 
   return (
     <table className="w-full min-w-[960px] border-collapse text-sm">
@@ -1022,7 +1247,16 @@ function CaseTable({
         <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
           <Th className="w-7 pl-4" />
           <Th className="w-10 pl-1">
-            <input type="checkbox" className="accent-brand-primary" />
+            <input
+              type="checkbox"
+              checked={allTicked}
+              ref={(el) => {
+                if (el) el.indeterminate = ticked.length > 0 && !allTicked;
+              }}
+              onChange={(e) => onSelectAll(e.target.checked)}
+              title={allTicked ? "Select none" : "Select all"}
+              className="accent-brand-primary"
+            />
           </Th>
           <Th className="w-24">ID</Th>
           <Th>Title</Th>
@@ -1036,22 +1270,20 @@ function CaseTable({
         </tr>
       </thead>
       <tbody>
-        {groups.map((group) => (
+        {groups.map((group) => {
+          // A row a reorder cannot name (broken, or filed somewhere other than
+          // the group it is shown under) must not offer a landing edge: the
+          // sequence would not contain it and the case would silently go to the
+          // end of the group instead.
+          const placeable = reorderable ? new Set(orderableIds(group)) : null;
+          return (
           <Fragment key={group.key}>
             {headers && (
               <tr
                 // Dropping on a header files the case at the end of that group.
                 // Only meaningful while reordering is possible: outside a single
                 // suite there is no group to reorder within.
-                onDragOver={(e) => {
-                  if (!reorderable || !isCaseDrag(e)) return;
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = "move";
-                  setOver(null);
-                  setOverGroup(group.key);
-                }}
-                onDragLeave={() => setOverGroup(null)}
-                onDrop={(e) => reorderable && dropOnGroup(e, group)}
+                {...(reorderable ? groupTarget(group.key) : {})}
                 className={cn(
                   "border-b border-border-subtle/60 bg-bg-surface/40",
                   overGroup === group.key && "ring-1 ring-inset ring-brand-primary",
@@ -1072,29 +1304,37 @@ function CaseTable({
             {group.cases.map((c) => (
               <tr
                 key={c.id}
-                onClick={() => onSelect(c.id)}
+                onClick={(e) => {
+                  // The modifiers tick rows, the way a file list does; a plain
+                  // click still previews.
+                  if (c.broken) onPreview(c.id);
+                  else if (e.metaKey || e.ctrlKey) onToggleSelected(c.id, false);
+                  else if (e.shiftKey) onToggleSelected(c.id, true);
+                  else onPreview(c.id);
+                }}
                 onDoubleClick={() => onOpen(c.id)}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(CASE_MIME, c.id);
-                  e.dataTransfer.effectAllowed = "move";
-                  setDragId(c.id);
+                // Dragging a ticked row drags every ticked row with it. A broken
+                // case cannot be refiled at all, so it does not drag.
+                onPointerDown={(e) => {
+                  if (c.broken) return;
+                  startCaseDrag(
+                    e,
+                    selected.has(c.id) ? ticked : [c.id],
+                    selected.has(c.id) && ticked.length > 1
+                      ? `${ticked.length} cases`
+                      : c.title,
+                    drop,
+                  );
                 }}
-                onDragEnd={() => {
-                  setDragId(null);
-                  setOver(null);
-                  setOverGroup(null);
-                }}
-                onDragOver={(e) => acceptRow(e, c.id)}
-                onDragLeave={() =>
-                  setOver((o) => (o?.id === c.id ? null : o))}
-                onDrop={(e) => dropOnRow(e, group, c.id)}
+                {...(placeable?.has(c.id) ? rowTarget(c.id) : {})}
                 className={cn(
                   "group cursor-pointer whitespace-nowrap border-b border-border-subtle/60",
-                  selectedId === c.id
-                    ? "bg-bg-surface-2/60"
-                    : "hover:bg-bg-surface/60",
-                  dragId === c.id && "opacity-40",
+                  selected.has(c.id)
+                    ? "bg-brand-primary/10"
+                    : previewId === c.id
+                      ? "bg-bg-surface-2/60"
+                      : "hover:bg-bg-surface/60",
+                  dragIds.includes(c.id) && "opacity-40",
                   over?.id === c.id &&
                     (over.after
                       ? "border-b-2 border-b-brand-primary"
@@ -1114,7 +1354,21 @@ function CaseTable({
                   </span>
                 </td>
                 <td className="pl-1" onClick={(e) => e.stopPropagation()}>
-                  <input type="checkbox" className="accent-brand-primary" />
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.id)}
+                    disabled={c.broken}
+                    // The tick is driven from the click, not the change, so a
+                    // shift-click can range: `onChange` carries no modifiers.
+                    onChange={() => {}}
+                    onClick={(e) => onToggleSelected(c.id, e.shiftKey)}
+                    title={
+                      c.broken
+                        ? "This case's front matter does not parse, so it cannot be moved"
+                        : `Select ${c.id}`
+                    }
+                    className="accent-brand-primary disabled:opacity-40"
+                  />
                 </td>
                 <td className="py-2 font-mono text-xs text-brand-primary">{c.id}</td>
                 <td className="py-2 pr-4 text-text-primary">
@@ -1171,7 +1425,8 @@ function CaseTable({
               </tr>
             ))}
           </Fragment>
-        ))}
+          );
+        })}
       </tbody>
     </table>
   );
@@ -1232,7 +1487,9 @@ function CaseRowMenu({
     c.suite === suite && (c.section ?? null) === section;
 
   return (
-    <div className="relative">
+    // The open menu's backdrop and panel are children of the case row, and a
+    // press on either would otherwise bubble into the row's drag.
+    <div className="relative" onPointerDown={(e) => e.stopPropagation()}>
       <button
         onClick={() => setOpen((o) => !o)}
         title={`Actions for ${c.id}`}
@@ -1248,37 +1505,14 @@ function CaseRowMenu({
           <div className="fixed inset-0 z-40" onClick={close} />
           <div className="absolute right-0 top-full z-50 mt-1 max-h-72 w-52 overflow-auto rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
             {moving ? (
-              <>
-                <div className="px-3 py-1.5 text-[11px] font-medium uppercase tracking-wider text-text-muted">
-                  Move to
-                </div>
-                {suites.map((s) => (
-                  <Fragment key={s.id}>
-                    <MenuItem
-                      label={s.name}
-                      icon={
-                        here(s.id, null) ? (
-                          <Check size={12} className="text-brand-primary" />
-                        ) : undefined
-                      }
-                      onClick={act(() => onMove(s.id, null))}
-                    />
-                    {s.sections.map((sec) => (
-                      <MenuItem
-                        key={sec.id}
-                        label={sec.name}
-                        indent
-                        icon={
-                          here(s.id, sec.id) ? (
-                            <Check size={12} className="text-brand-primary" />
-                          ) : undefined
-                        }
-                        onClick={act(() => onMove(s.id, sec.id))}
-                      />
-                    ))}
-                  </Fragment>
-                ))}
-              </>
+              <MoveToList
+                suites={suites}
+                here={here}
+                onMove={(suite, section) => {
+                  close();
+                  onMove(suite, section);
+                }}
+              />
             ) : (
               <>
                 <MenuItem
