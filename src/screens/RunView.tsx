@@ -22,6 +22,7 @@ import { useActivity } from "@/store/activity";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { TriageModal } from "@/screens/TriageModal";
 import { RunCasePanel, STATUS_KEYS } from "@/screens/RunCasePanel";
+import { RunMenu } from "@/screens/RunActions";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import {
   AutomationBadge,
@@ -268,6 +269,7 @@ export function RunView() {
             Reopen
           </Button>
         )}
+        <RunMenu run={run} onDeleted={() => navigate("runs")} />
       </div>
 
       {/* Summary bar */}

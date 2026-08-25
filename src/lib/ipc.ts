@@ -170,6 +170,12 @@ export const api = {
   ) => invoke<CaseSummary[]>("preview_run", { mode, query, suites, cases }),
   createRun: (input: CreateRunInput) =>
     invoke<Run>("create_run", { ...input }).then(normalizeRun),
+  /** Edit an existing run. The run keeps its id and its recorded results;
+   *  membership is re-resolved only when the include definition changed, and
+   *  the results of cases that leave the run go with them. */
+  updateRun: (id: string, input: CreateRunInput) =>
+    invoke<Run>("update_run", { id, ...input }).then(normalizeRun),
+  deleteRun: (id: string) => invoke<void>("delete_run", { id }),
   setResult: (
     runId: string,
     caseId: string,

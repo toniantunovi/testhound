@@ -25,6 +25,8 @@ interface SessionState {
   openCaseId: string | null;
   /** Run currently open in the execution view. */
   openRunId: string | null;
+  /** Run the builder is editing, or null when it is building a new one. */
+  editRunId: string | null;
   /** Case whose row the Automation view should scroll to and highlight. */
   automationFocus: string | null;
   activityOpen: boolean;
@@ -40,6 +42,7 @@ interface SessionState {
   openAutomation: (caseId: string) => void;
   clearAutomationFocus: () => void;
   newRun: () => void;
+  editRun: (id: string) => void;
   toggleActivity: () => void;
   setActivity: (open: boolean) => void;
   setPalette: (open: boolean) => void;
@@ -53,6 +56,7 @@ export const useSession = create<SessionState>((set) => ({
   selectedSection: null,
   openCaseId: null,
   openRunId: null,
+  editRunId: null,
   automationFocus: null,
   activityOpen: false,
   paletteOpen: false,
@@ -67,7 +71,8 @@ export const useSession = create<SessionState>((set) => ({
   openAutomation: (automationFocus) =>
     set({ automationFocus, view: "automation" }),
   clearAutomationFocus: () => set({ automationFocus: null }),
-  newRun: () => set({ view: "new-run" }),
+  newRun: () => set({ editRunId: null, view: "new-run" }),
+  editRun: (editRunId) => set({ editRunId, view: "new-run" }),
   toggleActivity: () => set((s) => ({ activityOpen: !s.activityOpen })),
   setActivity: (activityOpen) => set({ activityOpen }),
   setPalette: (paletteOpen) => set({ paletteOpen }),

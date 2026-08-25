@@ -98,6 +98,8 @@ pub fn run() {
             app::get_run,
             app::preview_run,
             app::create_run,
+            app::update_run,
+            app::delete_run,
             app::set_result,
             app::set_result_defects,
             app::set_run_state,

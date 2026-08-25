@@ -265,3 +265,104 @@ fn a_regression_run_takes_every_case_of_that_type() {
 
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Editing a run and deleting it, from the two ends that matter: a rename must
+/// not silently re-snapshot membership against a corpus that has since grown,
+/// and a redefinition takes the results of the cases it drops with it.
+#[test]
+fn editing_a_run_keeps_results_it_still_has_room_for_and_deleting_it_removes_them() {
+    let root = tmp_repo();
+    let th = "testhound";
+    repo::scaffold(&root, "Acme Shop", th).unwrap();
+    let paths = Paths::new(&root, th);
+    sample::seed(&paths).unwrap();
+
+    let r3 = runs::list_runs(&paths)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.name == "Regression R3")
+        .unwrap();
+    let before = runs::load_run(&paths, &r3.id).unwrap().run;
+    let members = before.includes.cases.clone();
+    assert_eq!(members.len(), 8);
+
+    // A case the run's filter ("suite:checkout OR tag:p1") would now match.
+    let id = repo::next_case_id(&paths).unwrap();
+    let fresh = repo::new_case(
+        id.clone(),
+        "Gift card at checkout".into(),
+        "checkout".into(),
+        "## Steps\n1. Pay with a gift card\n   - **Expected:** Accepted\n",
+    );
+    repo::save_case(&paths, &fresh).unwrap();
+
+    // Metadata-only edit: the snapshot is kept verbatim, new case and all.
+    let renamed = runs::update_run(
+        &paths,
+        &r3.id,
+        CreateRun {
+            name: "Regression R3 (week 2)".into(),
+            milestone: before.milestone.clone(),
+            configuration: before.configuration.clone(),
+            description: Some("second pass".into()),
+            assignee: Some("marco".into()),
+            mode: before.includes.mode,
+            query: before.includes.query.clone(),
+            suites: before.includes.suites.clone(),
+            cases: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(renamed.id, r3.id, "the run keeps its id and its directory");
+    assert_eq!(renamed.name, "Regression R3 (week 2)");
+    assert_eq!(renamed.assignee.as_deref(), Some("marco"));
+    assert_eq!(renamed.state, before.state, "editing is not a state change");
+    assert_eq!(renamed.created, before.created);
+    assert!(renamed.updated.is_some());
+    assert_eq!(renamed.includes.cases, members);
+    assert!(!renamed.includes.cases.contains(&id));
+    // Recorded results survived untouched.
+    assert_eq!(runs::load_run(&paths, &r3.id).unwrap().progress.untested, 0);
+
+    // Redefining membership: hand-pick two of the eight. The six that leave
+    // take their results with them.
+    let kept: Vec<String> = members[..2].to_vec();
+    let dropped = members[2].clone();
+    let narrowed = runs::update_run(
+        &paths,
+        &r3.id,
+        CreateRun {
+            name: renamed.name.clone(),
+            milestone: renamed.milestone.clone(),
+            configuration: renamed.configuration.clone(),
+            description: renamed.description.clone(),
+            assignee: renamed.assignee.clone(),
+            mode: IncludeMode::Explicit,
+            query: None,
+            suites: vec![],
+            cases: kept.clone(),
+        },
+    )
+    .unwrap();
+    assert_eq!(narrowed.includes.mode, IncludeMode::Explicit);
+    assert_eq!(narrowed.includes.cases, kept);
+    let detail = runs::load_run(&paths, &r3.id).unwrap();
+    assert_eq!(detail.progress.total, 2);
+    assert_eq!(detail.rows.len(), 2);
+    let results = root.join(th).join("runs").join(&r3.id).join("results");
+    assert!(!results.join(format!("{dropped}.yml")).exists());
+    for k in &kept {
+        assert!(results.join(format!("{k}.yml")).exists(), "{k}");
+    }
+
+    // Deleting takes the run and its results with it.
+    let count = runs::list_runs(&paths).unwrap().len();
+    runs::delete_run(&paths, &r3.id).unwrap();
+    assert!(!root.join(th).join("runs").join(&r3.id).exists());
+    assert_eq!(runs::list_runs(&paths).unwrap().len(), count - 1);
+    assert!(runs::load_run(&paths, &r3.id).is_err());
+    // And deleting it twice is an error, not a silent success.
+    assert!(runs::delete_run(&paths, &r3.id).is_err());
+
+    std::fs::remove_dir_all(&root).ok();
+}

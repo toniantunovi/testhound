@@ -508,6 +508,78 @@ pub fn create_run(paths: &Paths, input: CreateRun) -> Result<Run> {
     Ok(run)
 }
 
+/// Edit an existing run: its metadata always, its membership only when the
+/// definition actually changed. A metadata-only edit (a renamed run, another
+/// assignee) must not silently re-snapshot membership against a case corpus
+/// that has moved on since the run was created, so the stored snapshot is kept
+/// verbatim unless the mode, query, suites or hand-picked set differ.
+///
+/// When the definition did change, membership is re-resolved the way
+/// `create_run` resolves it and the result files of cases that left are
+/// deleted: a result only means something as a result *in* the run. The caller
+/// is expected to have warned about recorded work first.
+///
+/// The run keeps its id (and so its directory and its history), its state and
+/// its `created` stamp.
+pub fn update_run(paths: &Paths, id: &str, input: CreateRun) -> Result<Run> {
+    let mut run = load_run_meta(paths, id)?;
+    // The stored snapshot is sorted and de-duplicated, so a hand-picked set is
+    // compared the same way: re-ordering the ticks is not a redefinition.
+    let picked = {
+        let mut v = input.cases.clone();
+        v.sort();
+        v.dedup();
+        v
+    };
+    let redefined = run.includes.mode != input.mode
+        || run.includes.query != input.query
+        || run.includes.suites != input.suites
+        || (input.mode == IncludeMode::Explicit && run.includes.cases != picked);
+
+    if redefined {
+        let all = super::list_cases(paths)?;
+        let cases = resolve_includes(
+            &all,
+            input.mode,
+            input.query.as_deref(),
+            &input.suites,
+            &input.cases,
+        );
+        for dropped in run.includes.cases.iter().filter(|c| !cases.contains(c)) {
+            let path = results_dir(paths, id).join(format!("{dropped}.yml"));
+            if path.is_file() {
+                fs::remove_file(&path)?;
+            }
+        }
+        run.includes = Includes {
+            mode: input.mode,
+            query: input.query,
+            suites: input.suites,
+            cases,
+        };
+    }
+
+    run.name = input.name;
+    run.milestone = input.milestone;
+    run.configuration = input.configuration;
+    run.description = input.description;
+    run.assignee = input.assignee;
+    run.updated = Some(now_iso());
+    write_run(paths, &run)?;
+    Ok(run)
+}
+
+/// Delete a run: remove `runs/<id>/` with its results. The deletion lands in
+/// the working tree for review in the Changes panel; nothing is committed.
+pub fn delete_run(paths: &Paths, id: &str) -> Result<()> {
+    let dir = run_dir(paths, id);
+    if !dir.join("run.yml").is_file() {
+        return Err(Error::RunNotFound(id.to_string()));
+    }
+    fs::remove_dir_all(&dir)?;
+    Ok(())
+}
+
 /// One result update. `comment`/`elapsed` are `None` to leave the existing
 /// value, `Some` to set it (an empty comment clears it); `evidence` is `None`
 /// to leave artifacts untouched or `Some` to replace them (a re-run overwrites

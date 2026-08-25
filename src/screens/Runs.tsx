@@ -7,6 +7,7 @@ import { initials, relativeTime } from "@/lib/utils";
 import { RunStateBadge } from "@/components/ui/Badge";
 import { RunProgressBar } from "@/components/ui/RunProgressBar";
 import { Button } from "@/components/ui/Button";
+import { RunMenu } from "@/screens/RunActions";
 
 export function Runs() {
   const openRun = useSession((s) => s.openRun);
@@ -43,7 +44,8 @@ export function Runs() {
                 <th className="w-32 py-2 font-medium">State</th>
                 <th className="w-64 py-2 font-medium">Progress</th>
                 <th className="w-16 py-2 font-medium">Owner</th>
-                <th className="w-20 py-2 pr-6 font-medium">Created</th>
+                <th className="w-20 py-2 font-medium">Created</th>
+                <th className="w-8 py-2 pr-6" />
               </tr>
             </thead>
             <tbody>
@@ -96,7 +98,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
       <td className="py-3">
         <RunStateBadge state={run.state} />
       </td>
-      <td className="py-3 pr-6">
+      <td className="py-3 pr-4">
         <div className="flex items-center gap-3">
           <RunProgressBar progress={progress} className="flex-1" />
           <span className="w-24 shrink-0 text-right font-mono text-xs text-text-secondary">
@@ -113,8 +115,11 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
           {initials(run.assignee)}
         </span>
       </td>
-      <td className="py-3 pr-6 text-xs text-text-muted">
+      <td className="py-3 text-xs text-text-muted">
         {relativeTime(run.created)}
+      </td>
+      <td className="py-3 pr-6">
+        <RunMenu run={run} revealOnHover />
       </td>
     </tr>
   );

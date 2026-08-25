@@ -608,6 +608,49 @@ pub async fn create_run(
     )
 }
 
+/// Edit an existing run's definition. The run keeps its id, its state and its
+/// recorded results; membership is re-resolved only when the include definition
+/// changed, and the results of cases that leave the run are removed with them.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn update_run(
+    id: String,
+    name: String,
+    milestone: Option<String>,
+    configuration: Vec<String>,
+    description: Option<String>,
+    assignee: Option<String>,
+    mode: IncludeMode,
+    query: Option<String>,
+    suites: Vec<String>,
+    cases: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<Run> {
+    let paths = state.paths()?;
+    runs::update_run(
+        &paths,
+        &id,
+        CreateRun {
+            name,
+            milestone,
+            configuration,
+            description,
+            assignee,
+            mode,
+            query,
+            suites,
+            cases,
+        },
+    )
+}
+
+/// Delete a run with its recorded results. The deletion lands in the working
+/// tree for review in the Changes panel; nothing is committed.
+#[tauri::command]
+pub async fn delete_run(id: String, state: tauri::State<'_, AppState>) -> Result<()> {
+    runs::delete_run(&state.paths()?, &id)
+}
+
 #[tauri::command]
 pub async fn set_result(
     run_id: String,

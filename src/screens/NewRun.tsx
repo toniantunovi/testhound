@@ -1,9 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Play } from "lucide-react";
-import { api } from "@/lib/ipc";
+import { AlertTriangle, ArrowLeft, Check, Play } from "lucide-react";
+import { api, errMsg, type CreateRunInput } from "@/lib/ipc";
 import { countBucket, track } from "@/lib/telemetry";
-import type { CaseStatus, CaseType, IncludeMode, Priority } from "@/lib/types";
+import type {
+  CaseStatus,
+  CaseType,
+  IncludeMode,
+  Priority,
+  RunDetail,
+} from "@/lib/types";
 import {
   buildQuery,
   emptyFacets,
@@ -13,6 +19,7 @@ import {
   type Facets,
 } from "@/lib/query";
 import { useSession } from "@/store/session";
+import { useActivity } from "@/store/activity";
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -40,24 +47,55 @@ const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
  *  and a wall of chips is no easier to use than typing. */
 const TAG_CHIPS = 12;
 
+/** The run builder, in either of its two jobs: defining a new run, or editing
+ *  one that already exists (`editRunId` in the session). Both are the same
+ *  form, so a run is changed where it was built. */
 export function NewRun() {
+  const editRunId = useSession((s) => s.editRunId);
+  const { data: editing } = useQuery({
+    queryKey: ["run", editRunId],
+    queryFn: () => api.getRun(editRunId!),
+    enabled: !!editRunId,
+  });
+
+  if (editRunId && !editing) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-text-muted">
+        Loading run…
+      </div>
+    );
+  }
+  // Keyed by the run, so switching which run is edited re-seeds the form.
+  return <RunBuilder key={editRunId ?? "new"} editing={editing ?? null} />;
+}
+
+function RunBuilder({ editing }: { editing: RunDetail | null }) {
+  const existing = editing?.run ?? null;
   const navigate = useSession((s) => s.navigate);
   const openRun = useSession((s) => s.openRun);
   const qc = useQueryClient();
 
-  const [name, setName] = useState("New run");
-  const [milestone, setMilestone] = useState<string>("");
-  const [assignee, setAssignee] = useState("");
-  const [description, setDescription] = useState("");
-  const [config, setConfig] = useState<string[]>([]);
-  const [mode, setMode] = useState<IncludeMode>("suite");
-  const [suites, setSuites] = useState<string[]>([]);
-  const [picked, setPicked] = useState<string[]>([]);
+  const [name, setName] = useState(existing?.name ?? "New run");
+  const [milestone, setMilestone] = useState<string>(existing?.milestone ?? "");
+  const [assignee, setAssignee] = useState(existing?.assignee ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [config, setConfig] = useState<string[]>(existing?.configuration ?? []);
+  const [mode, setMode] = useState<IncludeMode>(
+    existing?.includes.mode ?? "suite",
+  );
+  const [suites, setSuites] = useState<string[]>(
+    existing?.includes.suites ?? [],
+  );
+  const [picked, setPicked] = useState<string[]>(
+    existing?.includes.mode === "explicit" ? existing.includes.cases ?? [] : [],
+  );
   // Filter mode: ticked facets, or a hand-written query once the user asks to
   // edit one. The query is what the run stores either way (see `buildQuery`).
+  // A run being edited starts from its stored query, in the box until the
+  // project's suites and tags are known well enough to tick it into the picker.
   const [facets, setFacets] = useState<Facets>(emptyFacets);
-  const [queryText, setQueryText] = useState("");
-  const [handWritten, setHandWritten] = useState(false);
+  const [queryText, setQueryText] = useState(existing?.includes.query ?? "");
+  const [handWritten, setHandWritten] = useState(!!existing?.includes.query);
 
   const { data: suiteTree = [] } = useQuery({
     queryKey: ["suites"],
@@ -107,6 +145,26 @@ export function NewRun() {
   // exactly what it says; otherwise the box keeps it.
   const reopenable = handWritten ? parseQuery(queryText, allowed) : null;
 
+  // An edited run's stored query moves into the picker as soon as the project's
+  // suites and tags are loaded, so editing starts where building left off. Once
+  // only, and never over a query the user has already touched.
+  const stored = existing?.includes.query ?? "";
+  const seeded = useRef(!stored);
+  useEffect(() => {
+    if (seeded.current) return;
+    if (queryText !== stored) {
+      seeded.current = true;
+      return;
+    }
+    if (suiteTree.length === 0 || allCases.length === 0) return;
+    seeded.current = true;
+    const parsed = parseQuery(stored, allowed);
+    if (parsed) {
+      setFacets(parsed);
+      setHandWritten(false);
+    }
+  }, [stored, queryText, suiteTree, allCases, allowed]);
+
   const toggleFacet = (key: FacetKey, value: string) =>
     setFacets((f) => ({
       ...f,
@@ -127,54 +185,101 @@ export function NewRun() {
       ),
   });
 
-  const create = useMutation({
+  const input: CreateRunInput = {
+    name: name.trim() || "Untitled run",
+    milestone: milestone || null,
+    configuration: config,
+    description: description.trim() || null,
+    assignee: assignee.trim() || null,
+    mode,
+    query: mode === "filter" ? query : null,
+    suites: mode === "suite" ? suites : [],
+    cases: mode === "explicit" ? picked : [],
+  };
+
+  // Whether the include definition itself changed, mirroring what the backend
+  // decides in `update_run`: an unchanged definition keeps the run's membership
+  // snapshot verbatim rather than re-resolving it against a case corpus that
+  // has moved on since the run was created.
+  const redefined =
+    !existing ||
+    existing.includes.mode !== input.mode ||
+    (existing.includes.query ?? null) !== (input.query ?? null) ||
+    !sameList(existing.includes.suites ?? [], input.suites) ||
+    (input.mode === "explicit" &&
+      !sameList(
+        existing.includes.cases ?? [],
+        [...new Set(input.cases)].sort(),
+      ));
+
+  // What saving would leave the run holding: the resolved preview when the
+  // definition changed, the snapshot it already has when it did not.
+  const members =
+    existing && !redefined
+      ? allCases.filter((c) => (existing.includes.cases ?? []).includes(c.id))
+      : preview;
+  // Recorded results that leave with the cases they belong to.
+  const losing = redefined
+    ? (editing?.rows ?? []).filter(
+        (r) => r.status !== "untested" && !members.some((c) => c.id === r.case),
+      )
+    : [];
+
+  const save = useMutation({
     mutationFn: () =>
-      api.createRun({
-        name: name.trim() || "Untitled run",
-        milestone: milestone || null,
-        configuration: config,
-        description: description.trim() || null,
-        assignee: assignee.trim() || null,
-        mode,
-        query: mode === "filter" ? query : null,
-        suites: mode === "suite" ? suites : [],
-        cases: mode === "explicit" ? picked : [],
-      }),
+      existing ? api.updateRun(existing.id, input) : api.createRun(input),
     onSuccess: (run) => {
-      void track("run_created", { case_count_bucket: countBucket(preview.length) });
+      if (!existing) {
+        void track("run_created", {
+          case_count_bucket: countBucket(members.length),
+        });
+      }
+      qc.invalidateQueries({ queryKey: ["run", run.id] });
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       openRun(run.id);
     },
+    onError: (e) => useActivity.getState().push(`x ${errMsg(e)}`),
   });
 
   const toggle = (arr: string[], set: (v: string[]) => void, id: string) =>
     set(arr.includes(id) ? arr.filter((x) => x !== id) : [...arr, id]);
 
-  const canCreate = preview.length > 0 && !create.isPending;
+  const canSave = members.length > 0 && !save.isPending;
 
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center gap-3 border-b border-border-subtle px-6 py-3">
         <button
-          onClick={() => navigate("runs")}
+          onClick={() => (existing ? openRun(existing.id) : navigate("runs"))}
+          title={existing ? "Back to the run" : "Back to the run list"}
           className="text-text-muted hover:text-text-primary"
         >
           <ArrowLeft size={16} />
         </button>
-        <h1 className="text-base font-semibold">New run</h1>
+        <h1 className="min-w-0 truncate text-base font-semibold">
+          {existing ? `Edit ${existing.name}` : "New run"}
+        </h1>
         <div className="flex-1" />
-        <span className="text-xs text-text-muted">
-          {isFetching ? "resolving…" : `${preview.length} cases`}
+        <span className="shrink-0 text-xs text-text-muted">
+          {isFetching && redefined ? "resolving…" : `${members.length} cases`}
         </span>
         <Button
           variant="primary"
           size="md"
-          disabled={!canCreate}
-          onClick={() => create.mutate()}
+          disabled={!canSave}
+          onClick={() => save.mutate()}
         >
-          <Play size={14} /> Create run
+          {existing ? (
+            <>
+              <Check size={14} /> Save changes
+            </>
+          ) : (
+            <>
+              <Play size={14} /> Create run
+            </>
+          )}
         </Button>
       </div>
 
@@ -447,16 +552,35 @@ export function NewRun() {
               Included cases
             </span>
             <span className="font-mono text-xs text-text-secondary">
-              {preview.length}
+              {members.length}
             </span>
           </div>
-          {preview.length === 0 ? (
+          {existing && !redefined && (
+            <p className="mb-3 text-xs leading-relaxed text-text-muted">
+              The definition is unchanged, so the run keeps the cases it was
+              built with.
+            </p>
+          )}
+          {losing.length > 0 && (
+            <p className="mb-3 flex gap-2 rounded-card border border-status-failed/40 bg-status-failed/10 px-2.5 py-2 text-xs leading-relaxed text-text-secondary">
+              <AlertTriangle
+                size={14}
+                className="mt-0.5 shrink-0 text-status-failed"
+              />
+              <span>
+                {losing.length} recorded{" "}
+                {losing.length === 1 ? "result" : "results"} will be deleted:
+                these cases leave the run.
+              </span>
+            </p>
+          )}
+          {members.length === 0 ? (
             <p className="text-sm text-text-muted">
               Nothing matches yet. Adjust the definition on the left.
             </p>
           ) : (
             <div className="flex flex-col gap-1">
-              {preview.map((c) => (
+              {members.map((c) => (
                 <div
                   key={c.id}
                   className="flex items-center gap-2 rounded-control px-2 py-1.5 hover:bg-bg-surface-2/50"
@@ -476,6 +600,11 @@ export function NewRun() {
       </div>
     </div>
   );
+}
+
+/** Two id lists as the backend compares them: same length, same order. */
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 function Field({
