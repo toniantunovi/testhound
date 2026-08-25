@@ -1,12 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for the TestHound main window",
-  "windows": ["main"],
+  "description": "Default capabilities for the TestHound main window. dialog:default covers message/save/open only, so allow-ask is listed explicitly: every destructive action confirms with ask() and is refused without it.",
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
     "dialog:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-ask"
   ]
 }

@@ -1,7 +1,7 @@
 // Search and ordering rules for the case list. Kept out of the screen so the
 // case table, the tree and any future picker agree on what "matches" and what
 // "comes first" mean.
-import type { CaseSummary, SuiteTree } from "./types";
+import type { CaseSummary, RunResultRow, SuiteTree } from "./types";
 
 /** A run of consecutive rows shown under one header: a folder of the selected
  *  suite, or a whole suite in the "All cases" view. */
@@ -49,6 +49,24 @@ export function matchesCase(c: CaseSummary, query: string): boolean {
   return (
     searchKey(c.id).includes(key) ||
     c.references.some((r) => searchKey(r).includes(key))
+  );
+}
+
+/** Does a run's case row match the search box? The same rules as the case list,
+ *  over what a run carries about a case: the title and where it is filed match
+ *  as plain substrings, the id and the defects found against it on their
+ *  normalized key. Tags are not on a run row, so they are not searched here. */
+export function matchesRunRow(row: RunResultRow, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (row.title.toLowerCase().includes(q)) return true;
+  if (row.suite.toLowerCase().includes(q)) return true;
+  if (row.section?.toLowerCase().includes(q)) return true;
+  const key = searchKey(q);
+  if (!key) return false;
+  return (
+    searchKey(row.case).includes(key) ||
+    row.defects.some((d) => searchKey(d).includes(key))
   );
 }
 

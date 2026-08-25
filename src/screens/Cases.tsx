@@ -702,6 +702,8 @@ export function Cases() {
               onDuplicate={(c) => duplicateCase.mutate(c.id)}
               onMove={(c, suite, section) =>
                 moveCases.mutate({ ids: [c.id], suite, section })}
+              onSetFields={(c, fields) =>
+                setCaseFields.mutate({ ids: [c.id], fields })}
               onDropCases={dropCasesOn}
               onNudge={(c, delta) => {
                 const ids = nudgeIds(groupIdsFor(c), c.id, delta);
@@ -1289,45 +1291,17 @@ function BulkEditMenu({
                     }}
                   />
                 ) : (
-                  <>
-                    <MenuHeading>
-                      {pane.plural
-                        ? `Add or remove ${pane.label.toLowerCase()}`
-                        : `Set ${pane.label.toLowerCase()}`}
-                    </MenuHeading>
-                    {pane.options.map((o) => {
-                      // How much of the selection carries this value: all of it
-                      // (picking it takes it away), some, or none.
-                      const on = cases.filter((c) => pane.has(c, o)).length;
-                      const all = cases.length > 0 && on === cases.length;
-                      const blocked = all
-                        ? pane.blockedRemoval?.(cases, o) ?? null
-                        : null;
-                      return (
-                        <MenuItem
-                          key={o}
-                          label={o}
-                          capitalize
-                          disabled={blocked ?? undefined}
-                          // A spacer where the tick is not, so the values line
-                          // up in one column instead of shifting by a row.
-                          icon={
-                            all ? (
-                              <Check size={12} className="text-brand-primary" />
-                            ) : on > 0 && pane.plural ? (
-                              <Minus size={12} className="text-text-muted" />
-                            ) : (
-                              <span className="w-3" />
-                            )
-                          }
-                          onClick={() => {
-                            close();
-                            onSet(pane.patch(o, !(all && pane.plural)));
-                          }}
-                        />
-                      );
-                    })}
-                  </>
+                  <FieldValues
+                    field={pane}
+                    cases={cases}
+                    onSet={(fields) => {
+                      // A plural field stays open: its values are ticked one at
+                      // a time, and closing after each would make setting a
+                      // second type a fresh trip through the menu.
+                      if (!pane.plural) close();
+                      onSet(fields);
+                    }}
+                  />
                 )}
               </>
             )}
@@ -1335,6 +1309,56 @@ function BulkEditMenu({
         </>
       )}
     </div>
+  );
+}
+
+/** One field's values, ticked against the cases a pick would set them on.
+ *  Shared by the bulk bar and the row menu, so a field is set the same way
+ *  whether one case is ticked, one row's menu is open, or twenty are ticked. */
+function FieldValues({
+  field,
+  cases,
+  onSet,
+}: {
+  field: BulkField;
+  cases: CaseSummary[];
+  onSet: (fields: BulkFields) => void;
+}) {
+  return (
+    <>
+      <MenuHeading>
+        {field.plural
+          ? `Add or remove ${field.label.toLowerCase()}`
+          : `Set ${field.label.toLowerCase()}`}
+      </MenuHeading>
+      {field.options.map((o) => {
+        // How much of the selection carries this value: all of it (picking it
+        // takes it away), some, or none.
+        const on = cases.filter((c) => field.has(c, o)).length;
+        const all = cases.length > 0 && on === cases.length;
+        const blocked = all ? field.blockedRemoval?.(cases, o) ?? null : null;
+        return (
+          <MenuItem
+            key={o}
+            label={o}
+            capitalize
+            disabled={blocked ?? undefined}
+            // A spacer where the tick is not, so the values line up in one
+            // column instead of shifting by a row.
+            icon={
+              all ? (
+                <Check size={12} className="text-brand-primary" />
+              ) : on > 0 && field.plural ? (
+                <Minus size={12} className="text-text-muted" />
+              ) : (
+                <span className="w-3" />
+              )
+            }
+            onClick={() => onSet(field.patch(o, !(all && field.plural)))}
+          />
+        );
+      })}
+    </>
   );
 }
 
@@ -1487,6 +1511,7 @@ function CaseTable({
   onOpen,
   onDuplicate,
   onMove,
+  onSetFields,
   onDropCases,
   onNudge,
   onDelete,
@@ -1509,6 +1534,8 @@ function CaseTable({
   onOpen: (id: string) => void;
   onDuplicate: (c: CaseSummary) => void;
   onMove: (c: CaseSummary, suite: string, section: string | null) => void;
+  /** Set front-matter fields on one case, from its row menu. */
+  onSetFields: (c: CaseSummary, fields: BulkFields) => void;
   /** A drag was released over `target`. */
   onDropCases: (target: CaseDropTarget, caseIds: string[]) => void;
   onNudge: (c: CaseSummary, delta: -1 | 1) => void;
@@ -1725,6 +1752,7 @@ function CaseTable({
                     onOpen={() => onOpen(c.id)}
                     onDuplicate={() => onDuplicate(c)}
                     onMove={(suite, section) => onMove(c, suite, section)}
+                    onSet={(fields) => onSetFields(c, fields)}
                     onNudge={(delta) => onNudge(c, delta)}
                     onDelete={() => onDelete(c)}
                   />
@@ -1767,6 +1795,7 @@ function CaseRowMenu({
   onOpen,
   onDuplicate,
   onMove,
+  onSet,
   onNudge,
   onDelete,
 }: {
@@ -1776,15 +1805,20 @@ function CaseRowMenu({
   onOpen: () => void;
   onDuplicate: () => void;
   onMove: (suite: string, section: string | null) => void;
+  /** Set front-matter fields on this one case. The same menu the bulk bar
+   *  offers, so a single row needs neither a tick nor the editor to be given a
+   *  second type. */
+  onSet: (fields: BulkFields) => void;
   onNudge: (delta: -1 | 1) => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [moving, setMoving] = useState(false);
+  /** The panel in front: a field's values, the suite list, or the top level. */
+  const [pane, setPane] = useState<BulkField | "move" | null>(null);
 
   const close = () => {
     setOpen(false);
-    setMoving(false);
+    setPane(null);
   };
   const act = (fn: () => void) => () => {
     close();
@@ -1811,15 +1845,35 @@ function CaseRowMenu({
         <>
           <div className="fixed inset-0 z-40" onClick={close} />
           <div className="absolute right-0 top-full z-50 mt-1 max-h-72 w-52 overflow-auto rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
-            {moving ? (
-              <MoveToList
-                suites={suites}
-                here={here}
-                onMove={(suite, section) => {
-                  close();
-                  onMove(suite, section);
-                }}
-              />
+            {pane !== null ? (
+              <>
+                <MenuItem
+                  icon={<ChevronLeft size={13} />}
+                  label="Back"
+                  onClick={() => setPane(null)}
+                />
+                {pane === "move" ? (
+                  <MoveToList
+                    suites={suites}
+                    here={here}
+                    onMove={(suite, section) => {
+                      close();
+                      onMove(suite, section);
+                    }}
+                  />
+                ) : (
+                  <FieldValues
+                    field={pane}
+                    cases={[c]}
+                    onSet={(fields) => {
+                      // A plural field stays open, so a case can be given
+                      // several types without reopening the menu per value.
+                      if (!pane.plural) close();
+                      onSet(fields);
+                    }}
+                  />
+                )}
+              </>
             ) : (
               <>
                 <MenuItem
@@ -1832,6 +1886,33 @@ function CaseRowMenu({
                   label="Duplicate"
                   onClick={act(onDuplicate)}
                 />
+                <div className="my-1 border-t border-border-subtle" />
+                {/* The closed vocabularies, set right here: the bulk bar is for
+                    many cases at once, not the only way to reach them. */}
+                {BULK_FIELDS.map((f) => (
+                  <MenuItem
+                    key={f.key}
+                    label={f.label}
+                    // A spacer where the other rows carry an icon, so the whole
+                    // menu reads down one column.
+                    icon={<span className="w-[13px]" />}
+                    disabled={
+                      c.broken
+                        ? "This case's front matter does not parse; fix the file first"
+                        : undefined
+                    }
+                    trailing={
+                      <>
+                        <span className="max-w-[7rem] truncate capitalize text-text-muted">
+                          {f.of(c)}
+                        </span>
+                        <ChevronRight size={13} className="text-text-muted" />
+                      </>
+                    }
+                    onClick={() => setPane(f)}
+                  />
+                ))}
+                <div className="my-1 border-t border-border-subtle" />
                 {/* The same reordering as dragging, for anyone who would rather
                     not drag (and for when a filter rules dragging out). */}
                 {reorderable && (
@@ -1851,7 +1932,8 @@ function CaseRowMenu({
                 <MenuItem
                   icon={<FolderInput size={13} />}
                   label="Move to suite or folder…"
-                  onClick={() => setMoving(true)}
+                  trailing={<ChevronRight size={13} className="text-text-muted" />}
+                  onClick={() => setPane("move")}
                 />
                 <MenuItem
                   icon={<Trash2 size={13} />}

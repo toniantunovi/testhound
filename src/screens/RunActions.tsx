@@ -41,12 +41,19 @@ export function RunMenu({
     onError: (e) => useActivity.getState().push(`x ${errMsg(e)}`),
   });
 
+  // The confirmation itself can fail (a dialog the window is not allowed to
+  // open), and a swallowed rejection would read as "delete does nothing": the
+  // reason goes to the activity log instead.
   const confirmDelete = async () => {
-    const ok = await ask(
-      `Delete run "${run.name}" and the results recorded in it?\n\nThe files are removed from the working tree; review and commit the deletion in the Changes panel.`,
-      { title: "Delete run", kind: "warning" },
-    );
-    if (ok) remove.mutate();
+    try {
+      const ok = await ask(
+        `Delete run "${run.name}" and the results recorded in it?\n\nThe files are removed from the working tree; review and commit the deletion in the Changes panel.`,
+        { title: "Delete run", kind: "warning" },
+      );
+      if (ok) remove.mutate();
+    } catch (e) {
+      useActivity.getState().push(`x ${errMsg(e)}`);
+    }
   };
 
   const act = (fn: () => void) => () => {

@@ -7,7 +7,9 @@ import {
   FileArchive,
   Loader2,
   Play,
+  Search,
   Stethoscope,
+  X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { track } from "@/lib/telemetry";
@@ -23,6 +25,7 @@ import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { TriageModal } from "@/screens/TriageModal";
 import { RunCasePanel, STATUS_KEYS } from "@/screens/RunCasePanel";
 import { RunMenu } from "@/screens/RunActions";
+import { matchesRunRow } from "@/lib/cases";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import {
   AutomationBadge,
@@ -97,9 +100,14 @@ export function RunView() {
   const [panelCaseId, setPanelCaseId] = useState<string | null>(null);
   /** Statuses the case list is narrowed to; empty means show everything. */
   const [statuses, setStatuses] = useState<Set<ResultStatus>>(new Set());
+  /** The search box over the run's cases, the same one the case list has. */
+  const [query, setQuery] = useState("");
 
   // A filter belongs to the run it was set in, not to the screen.
-  useEffect(() => setStatuses(new Set()), [id]);
+  useEffect(() => {
+    setStatuses(new Set());
+    setQuery("");
+  }, [id]);
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -164,14 +172,17 @@ export function RunView() {
   const automatable = rows.filter(
     (r) => r.automationState === "linked" || r.automationState === "drifted",
   ).length;
-  const filtered =
-    statuses.size === 0 ? rows : rows.filter((r) => statuses.has(r.status));
+  /** The status buttons and the search box narrow the list together: a search
+   *  runs inside whatever statuses are ticked. */
+  const shown = (r: RunResultRow) =>
+    (statuses.size === 0 || statuses.has(r.status)) && matchesRunRow(r, query);
+  const narrowed = statuses.size > 0 || query.trim() !== "";
+  const filtered = rows.filter(shown);
   // The open case keeps its place in the slide-over even once a just-recorded
   // result drops it out of the filter, so prev/next never loses its footing.
-  const navRows =
-    statuses.size === 0 || !panelCaseId
-      ? filtered
-      : rows.filter((r) => statuses.has(r.status) || r.case === panelCaseId);
+  const navRows = panelCaseId
+    ? rows.filter((r) => shown(r) || r.case === panelCaseId)
+    : filtered;
   const panelIdx = panelCaseId
     ? navRows.findIndex((r) => r.case === panelCaseId)
     : -1;
@@ -334,7 +345,27 @@ export function RunView() {
             </button>
           );
         })}
-        {statuses.size > 0 && (
+        <div className="hidden flex-1 sm:block" />
+        <div className="flex h-7 min-w-0 items-center gap-2 rounded-control border border-border-subtle bg-bg-surface px-2.5">
+          <Search size={13} className="shrink-0 text-text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search cases or defects"
+            className="w-full min-w-0 max-w-48 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+          />
+          {query !== "" && (
+            <button
+              onClick={() => setQuery("")}
+              title="Clear search"
+              aria-label="Clear search"
+              className="shrink-0 text-text-muted hover:text-text-primary"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+        {narrowed && (
           <span className="text-xs text-text-muted">
             {filtered.length} of {rows.length} cases
           </span>
@@ -345,7 +376,7 @@ export function RunView() {
       <div className="min-h-0 flex-1 overflow-auto">
         {filtered.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-text-muted">
-            No cases match this filter.
+            {narrowed ? "No cases match." : "This run has no cases."}
           </div>
         ) : (
           <table className="w-full min-w-[720px] border-collapse text-sm">
