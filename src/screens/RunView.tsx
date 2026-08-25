@@ -11,7 +11,12 @@ import {
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import { track } from "@/lib/telemetry";
-import type { ResultStatus, RunResultRow, RunState } from "@/lib/types";
+import type {
+  ResultStatus,
+  RunProgress,
+  RunResultRow,
+  RunState,
+} from "@/lib/types";
 import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
@@ -26,6 +31,55 @@ import {
 import { RunProgressBar } from "@/components/ui/RunProgressBar";
 import { Button } from "@/components/ui/Button";
 
+/** The status buckets a run's case list can be filtered by, in the order they
+ *  appear in the filter bar. `untested` is included so a tester can pull up
+ *  exactly what is still left to do. */
+const FILTER_KEYS: {
+  status: ResultStatus;
+  label: string;
+  countKey: keyof RunProgress;
+  className: string;
+}[] = [
+  {
+    status: "untested",
+    label: "Untested",
+    countKey: "untested",
+    className: "border-text-muted/50 bg-bg-surface-2 text-text-primary",
+  },
+  {
+    status: "passed",
+    label: "Passed",
+    countKey: "passed",
+    className: "border-status-passed/50 bg-status-passed/10 text-status-passed",
+  },
+  {
+    status: "failed",
+    label: "Failed",
+    countKey: "failed",
+    className: "border-status-failed/50 bg-status-failed/10 text-status-failed",
+  },
+  {
+    status: "blocked",
+    label: "Blocked",
+    countKey: "blocked",
+    className:
+      "border-status-blocked/50 bg-status-blocked/10 text-status-blocked",
+  },
+  {
+    status: "retest",
+    label: "Retest",
+    countKey: "retest",
+    className: "border-status-retest/50 bg-status-retest/10 text-status-retest",
+  },
+  {
+    status: "skipped",
+    label: "Skipped",
+    countKey: "skipped",
+    className:
+      "border-status-skipped/50 bg-status-skipped/10 text-status-skipped",
+  },
+];
+
 export function RunView() {
   const id = useSession((s) => s.openRunId);
   const navigate = useSession((s) => s.navigate);
@@ -39,6 +93,11 @@ export function RunView() {
   const [headed, setHeaded] = useState(false);
   /** Case open in the read-and-record slide-over, if any. */
   const [panelCaseId, setPanelCaseId] = useState<string | null>(null);
+  /** Statuses the case list is narrowed to; empty means show everything. */
+  const [statuses, setStatuses] = useState<Set<ResultStatus>>(new Set());
+
+  // A filter belongs to the run it was set in, not to the screen.
+  useEffect(() => setStatuses(new Set()), [id]);
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -96,10 +155,24 @@ export function RunView() {
   const automatable = rows.filter(
     (r) => r.automationState === "linked" || r.automationState === "drifted",
   ).length;
+  const filtered =
+    statuses.size === 0 ? rows : rows.filter((r) => statuses.has(r.status));
+  // The open case keeps its place in the slide-over even once a just-recorded
+  // result drops it out of the filter, so prev/next never loses its footing.
+  const navRows =
+    statuses.size === 0 || !panelCaseId
+      ? filtered
+      : rows.filter((r) => statuses.has(r.status) || r.case === panelCaseId);
   const panelIdx = panelCaseId
-    ? rows.findIndex((r) => r.case === panelCaseId)
+    ? navRows.findIndex((r) => r.case === panelCaseId)
     : -1;
-  const panelRow = panelIdx >= 0 ? rows[panelIdx] : null;
+  const panelRow = panelIdx >= 0 ? navRows[panelIdx] : null;
+  const toggleStatus = (status: ResultStatus) =>
+    setStatuses((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(status)) next.add(status);
+      return next;
+    });
 
   return (
     <div className="flex h-full flex-col">
@@ -214,45 +287,99 @@ export function RunView() {
         </div>
       </div>
 
+      {/* Status filter */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
+        <button
+          onClick={() => setStatuses(new Set())}
+          className={cn(
+            "flex h-7 items-center gap-1.5 rounded-control border px-2.5 text-xs font-medium transition-colors",
+            statuses.size === 0
+              ? "border-border-strong bg-bg-surface-2 text-text-primary"
+              : "border-border-subtle text-text-secondary hover:border-border-strong hover:text-text-primary",
+          )}
+        >
+          All
+          <span className="font-mono text-[11px] opacity-70">
+            {progress.total}
+          </span>
+        </button>
+        {FILTER_KEYS.map((f) => {
+          const count = progress[f.countKey];
+          const on = statuses.has(f.status);
+          return (
+            <button
+              key={f.status}
+              onClick={() => toggleStatus(f.status)}
+              disabled={count === 0 && !on}
+              title={`Show only ${f.label.toLowerCase()} cases`}
+              className={cn(
+                "flex h-7 items-center gap-1.5 rounded-control border px-2.5 text-xs font-medium transition-colors disabled:opacity-40",
+                on
+                  ? f.className
+                  : "border-border-subtle text-text-secondary enabled:hover:border-border-strong enabled:hover:text-text-primary",
+              )}
+            >
+              {f.label}
+              <span className="font-mono text-[11px] opacity-70">{count}</span>
+            </button>
+          );
+        })}
+        {statuses.size > 0 && (
+          <span className="text-xs text-text-muted">
+            {filtered.length} of {rows.length} cases
+          </span>
+        )}
+      </div>
+
       {/* Cases */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
-          <thead className="sticky top-0 z-10 bg-bg-base">
-            <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
-              <th className="w-24 py-2 pl-6 font-medium">ID</th>
-              <th className="py-2 font-medium">Case</th>
-              <th className="w-28 py-2 font-medium">Priority</th>
-              <th className="w-[280px] py-2 font-medium">Result</th>
-              <th className="w-24 py-2 pr-6 font-medium">By</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <CaseRow
-                key={row.case}
-                row={row}
-                pending={
-                  setResult.isPending &&
-                  setResult.variables?.caseId === row.case
-                }
-                onSetStatus={(status) =>
-                  setResult.mutate({ caseId: row.case, status, comment: null })
-                }
-                onSetComment={(comment) =>
-                  setResult.mutate({
-                    caseId: row.case,
-                    status: row.status === "untested" ? "retest" : row.status,
-                    comment,
-                  })
-                }
-                onTriage={() =>
-                  setTriage({ caseId: row.case, title: row.title })
-                }
-                onOpen={() => setPanelCaseId(row.case)}
-              />
-            ))}
-          </tbody>
-        </table>
+        {filtered.length === 0 ? (
+          <div className="flex h-full items-center justify-center text-sm text-text-muted">
+            No cases match this filter.
+          </div>
+        ) : (
+          <table className="w-full min-w-[720px] border-collapse text-sm">
+            <thead className="sticky top-0 z-10 bg-bg-base">
+              <tr className="whitespace-nowrap border-b border-border-subtle text-left text-[11px] uppercase tracking-wider text-text-muted">
+                <th className="w-24 py-2 pl-6 font-medium">ID</th>
+                <th className="py-2 font-medium">Case</th>
+                <th className="w-28 py-2 font-medium">Priority</th>
+                <th className="w-[280px] py-2 font-medium">Result</th>
+                <th className="w-24 py-2 pr-6 font-medium">By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row) => (
+                <CaseRow
+                  key={row.case}
+                  row={row}
+                  pending={
+                    setResult.isPending &&
+                    setResult.variables?.caseId === row.case
+                  }
+                  onSetStatus={(status) =>
+                    setResult.mutate({
+                      caseId: row.case,
+                      status,
+                      comment: null,
+                    })
+                  }
+                  onSetComment={(comment) =>
+                    setResult.mutate({
+                      caseId: row.case,
+                      status: row.status === "untested" ? "retest" : row.status,
+                      comment,
+                    })
+                  }
+                  onTriage={() =>
+                    setTriage({ caseId: row.case, title: row.title })
+                  }
+                  onOpen={() => setPanelCaseId(row.case)}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {triage && (
@@ -268,13 +395,13 @@ export function RunView() {
         <RunCasePanel
           row={panelRow}
           index={panelIdx}
-          total={rows.length}
+          total={navRows.length}
           pending={
             setResult.isPending && setResult.variables?.caseId === panelRow.case
           }
           onClose={() => setPanelCaseId(null)}
           onNav={(dir) => {
-            const next = rows[panelIdx + dir];
+            const next = navRows[panelIdx + dir];
             if (next) setPanelCaseId(next.case);
           }}
           onSetStatus={(status) =>
