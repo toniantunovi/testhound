@@ -10,13 +10,11 @@ import {
   History,
   Loader2,
   Play,
-  Plus,
   Save,
   Sparkles,
   Square,
   StepForward,
   Trash2,
-  X,
 } from "lucide-react";
 import { api, errMsg } from "@/lib/ipc";
 import type {
@@ -32,6 +30,7 @@ import { useStep } from "@/store/step";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { AutomationBadge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ReferenceEditor } from "@/components/ui/Reference";
 import { cn } from "@/lib/utils";
 import { SpecEditorModal } from "./SpecEditorModal";
 
@@ -338,7 +337,7 @@ export function CaseEditor() {
             </div>
           </Field>
           <Field label="References">
-            <ReferencesEditor
+            <ReferenceEditor
               references={draft.references}
               onChange={(references) => patch({ references })}
             />
@@ -594,78 +593,6 @@ function SectionSelect({
         </option>
       )}
     </select>
-  );
-}
-
-/** Editable list of external references (Jira keys, ticket URLs, docs).
- *  URLs open in the system browser; anything else is shown as plain text. */
-function ReferencesEditor({
-  references,
-  onChange,
-}: {
-  references: string[];
-  onChange: (refs: string[]) => void;
-}) {
-  const [value, setValue] = useState("");
-
-  const add = () => {
-    const v = value.trim();
-    if (!v || references.includes(v)) return;
-    onChange([...references, v]);
-    setValue("");
-  };
-
-  return (
-    <div>
-      {references.length > 0 && (
-        <div className="mb-1.5 flex flex-col gap-1">
-          {references.map((r) => (
-            <div
-              key={r}
-              className="group flex items-center gap-1.5 rounded-control bg-bg-surface-2/60 px-1.5 py-1"
-            >
-              {/^https?:\/\//i.test(r) ? (
-                <button
-                  onClick={() => api.openUrl(r)}
-                  title={r}
-                  className="min-w-0 flex-1 truncate text-left font-mono text-xs text-brand-primary underline decoration-border-strong decoration-dotted underline-offset-2 hover:decoration-brand-primary"
-                >
-                  {r}
-                </button>
-              ) : (
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
-                  {r}
-                </span>
-              )}
-              <button
-                onClick={() => onChange(references.filter((x) => x !== r))}
-                title="Remove reference"
-                className="shrink-0 text-text-muted opacity-0 transition-opacity hover:text-status-failed group-hover:opacity-100"
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex items-center gap-1.5">
-        <input
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-          placeholder="PROJ-123 or https://…"
-          className="h-8 min-w-0 flex-1 rounded-control border border-border-subtle bg-bg-base px-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
-        />
-        <button
-          onClick={add}
-          disabled={!value.trim()}
-          title="Add reference"
-          className="rounded-control border border-border-subtle p-1.5 text-text-muted hover:text-text-primary disabled:opacity-40"
-        >
-          <Plus size={13} />
-        </button>
-      </div>
-    </div>
   );
 }
 

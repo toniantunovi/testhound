@@ -61,6 +61,8 @@ import {
   PriorityBadge,
 } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ReferenceLink } from "@/components/ui/Reference";
+import { isReferenceUrl, referenceLabel } from "@/lib/references";
 
 const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
 const TYPES: CaseType[] = [
@@ -1743,16 +1745,16 @@ function RefsCell({ references }: { references: string[] }) {
   if (references.length === 0) {
     return <span className="text-xs text-text-muted">-</span>;
   }
-  // Prefer a ticket key over a URL: it is what people search for.
-  const first =
-    references.find((r) => !/^https?:\/\//i.test(r)) ?? references[0];
+  // Prefer a bare ticket key over a link, and show a link as the ticket it
+  // points at: the key is what people scan and search for.
+  const first = references.find((r) => !isReferenceUrl(r)) ?? references[0];
   const rest = references.length - 1;
   return (
     <span
       title={references.join("\n")}
       className="flex items-center gap-1 font-mono text-[11px] text-text-secondary"
     >
-      <span className="truncate">{first}</span>
+      <span className="truncate">{referenceLabel(first)}</span>
       {rest > 0 && <span className="shrink-0 text-text-muted">+{rest}</span>}
     </span>
   );
@@ -2001,22 +2003,6 @@ function CasePreview({
 }
 
 /** A case reference: URLs open in the system browser, plain ids render as text. */
-export function ReferenceLink({ value }: { value: string }) {
-  const isUrl = /^https?:\/\//i.test(value);
-  if (!isUrl) {
-    return <span className="font-mono text-text-secondary">{value}</span>;
-  }
-  return (
-    <button
-      onClick={() => api.openUrl(value)}
-      title={value}
-      className="truncate text-left font-mono text-brand-primary underline decoration-border-strong decoration-dotted underline-offset-2 hover:decoration-brand-primary"
-    >
-      {value}
-    </button>
-  );
-}
-
 function Th({
   children,
   className,

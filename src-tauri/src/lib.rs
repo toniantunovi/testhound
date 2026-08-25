@@ -99,6 +99,7 @@ pub fn run() {
             app::preview_run,
             app::create_run,
             app::set_result,
+            app::set_result_defects,
             app::set_run_state,
             app::list_milestones,
             app::list_configurations,

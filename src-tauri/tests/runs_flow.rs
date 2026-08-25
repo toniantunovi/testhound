@@ -83,6 +83,51 @@ fn seed_list_and_record_results() {
     assert_eq!(tc10.attempts, 2);
     assert_eq!(tc10.comment.as_deref(), Some("Recovered on retry"));
 
+    // Linking a bug is not another execution: the defects land on the run's
+    // result, and the history and timestamp stay where the last attempt left
+    // them.
+    let before = detail
+        .rows
+        .iter()
+        .find(|row| row.case == "TC-0010")
+        .unwrap()
+        .clone();
+    runs::set_defects(
+        &paths,
+        &r3.id,
+        "TC-0010",
+        vec![
+            "  AB-9222  ".into(),
+            "https://example.atlassian.net/browse/AB-9223".into(),
+            "AB-9222".into(),
+            "   ".into(),
+        ],
+    )
+    .unwrap();
+    let detail = runs::load_run(&paths, &r3.id).unwrap();
+    let tc10 = detail.rows.iter().find(|row| row.case == "TC-0010").unwrap();
+    assert_eq!(
+        tc10.defects,
+        vec![
+            "AB-9222".to_string(),
+            "https://example.atlassian.net/browse/AB-9223".to_string()
+        ],
+        "trimmed and deduplicated"
+    );
+    assert_eq!(tc10.attempts, before.attempts);
+    assert_eq!(tc10.executed_at, before.executed_at);
+    assert_eq!(tc10.status, before.status);
+
+    // Clearing them leaves the result otherwise untouched.
+    runs::set_defects(&paths, &r3.id, "TC-0010", Vec::new()).unwrap();
+    let detail = runs::load_run(&paths, &r3.id).unwrap();
+    let tc10 = detail.rows.iter().find(|row| row.case == "TC-0010").unwrap();
+    assert!(tc10.defects.is_empty());
+    assert_eq!(tc10.comment.as_deref(), Some("Recovered on retry"));
+
+    // A non-member case cannot carry a defect either.
+    assert!(runs::set_defects(&paths, &r3.id, "TC-0002", vec!["AB-1".into()]).is_err());
+
     // A non-member case cannot be recorded against the run.
     assert!(runs::set_result(
         &paths,

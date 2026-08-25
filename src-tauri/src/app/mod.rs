@@ -629,6 +629,16 @@ pub async fn set_result(
 }
 
 #[tauri::command]
+pub async fn set_result_defects(
+    run_id: String,
+    case_id: String,
+    defects: Vec<String>,
+    state: tauri::State<'_, AppState>,
+) -> Result<RunResult> {
+    runs::set_defects(&state.paths()?, &run_id, &case_id, defects)
+}
+
+#[tauri::command]
 pub async fn set_run_state(
     run_id: String,
     run_state: RunState,

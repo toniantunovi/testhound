@@ -184,6 +184,8 @@ export const api = {
       comment,
       executedBy,
     }),
+  setResultDefects: (runId: string, caseId: string, defects: string[]) =>
+    invoke<unknown>("set_result_defects", { runId, caseId, defects }),
   setRunState: (runId: string, runState: Run["state"]) =>
     invoke<Run>("set_run_state", { runId, runState }).then(normalizeRun),
 

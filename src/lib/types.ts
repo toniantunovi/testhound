@@ -203,6 +203,9 @@ export interface RunResultRow {
   executedAt: string | null;
   elapsed: string | null;
   evidence: string[];
+  /** Bugs found while running this case, as ticket keys or links. Recorded on
+   *  the run's result, so the same case can carry different defects per run. */
+  defects: string[];
   attempts: number;
 }
 

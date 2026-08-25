@@ -115,6 +115,11 @@ pub struct RunResultRow {
     pub elapsed: Option<String>,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// Bugs found while executing this case in this run, as ticket keys or
+    /// links. Recorded per run, not on the case: a defect belongs to the
+    /// execution that found it.
+    #[serde(default)]
+    pub defects: Vec<String>,
     pub attempts: usize,
 }
 
@@ -426,6 +431,7 @@ pub fn load_run(paths: &Paths, id: &str) -> Result<RunDetail> {
             executed_at: res.and_then(|r| r.executed_at.clone()),
             elapsed: res.and_then(|r| r.elapsed.clone()),
             evidence: res.map(|r| r.evidence.clone()).unwrap_or_default(),
+            defects: res.map(|r| r.defects.clone()).unwrap_or_default(),
             attempts: res.map(|r| r.history.len()).unwrap_or(0),
         });
     }
@@ -516,6 +522,32 @@ pub struct ResultInput {
     pub evidence: Option<Vec<String>>,
 }
 
+/// The result file for a case in a run, plus the result it holds or an
+/// untested default when nothing has been recorded yet. Creates the results
+/// directory so the caller can write straight back to the path.
+fn open_result(paths: &Paths, run_id: &str, case_id: &str) -> Result<(PathBuf, RunResult)> {
+    let dir = results_dir(paths, run_id);
+    fs::create_dir_all(&dir)?;
+    let path = dir.join(format!("{case_id}.yml"));
+    let result = if path.is_file() {
+        serde_yaml::from_str::<RunResult>(&fs::read_to_string(&path)?)?
+    } else {
+        RunResult {
+            case: case_id.to_string(),
+            status: ResultStatus::Untested,
+            executed_by: None,
+            executed_at: None,
+            source: ResultSource::Manual,
+            elapsed: None,
+            comment: None,
+            evidence: Vec::new(),
+            defects: Vec::new(),
+            history: Vec::new(),
+        }
+    };
+    Ok((path, result))
+}
+
 /// Record (or overwrite) a case's result within a run, appending to its
 /// history. Recording the first result advances a `planned` run to
 /// `in_progress`. Shared by manual recording and automated ingestion.
@@ -532,26 +564,7 @@ pub fn apply_result(
         )));
     }
 
-    let dir = results_dir(paths, run_id);
-    fs::create_dir_all(&dir)?;
-    let path = dir.join(format!("{case_id}.yml"));
-
-    let mut result = if path.is_file() {
-        serde_yaml::from_str::<RunResult>(&fs::read_to_string(&path)?)?
-    } else {
-        RunResult {
-            case: case_id.to_string(),
-            status: ResultStatus::Untested,
-            executed_by: None,
-            executed_at: None,
-            source: ResultSource::Manual,
-            elapsed: None,
-            comment: None,
-            evidence: Vec::new(),
-            defects: Vec::new(),
-            history: Vec::new(),
-        }
-    };
+    let (path, mut result) = open_result(paths, run_id, case_id)?;
 
     let now = now_iso();
     result.status = input.status;
@@ -607,6 +620,36 @@ pub fn set_result(
             evidence: None,
         },
     )
+}
+
+/// Replace the defect references recorded for a case in a run. Kept apart from
+/// [`apply_result`] because linking a bug is not another execution: it must not
+/// append to the history or move `executed_at`. Values are trimmed and
+/// deduplicated, and an empty list clears them.
+pub fn set_defects(
+    paths: &Paths,
+    run_id: &str,
+    case_id: &str,
+    defects: Vec<String>,
+) -> Result<RunResult> {
+    let run = load_run_meta(paths, run_id)?;
+    if !run.includes.cases.iter().any(|c| c == case_id) {
+        return Err(Error::CaseNotFound(format!(
+            "{case_id} is not a member of run {run_id}"
+        )));
+    }
+
+    let (path, mut result) = open_result(paths, run_id, case_id)?;
+    let mut seen = Vec::new();
+    for d in defects {
+        let d = d.trim().to_string();
+        if !d.is_empty() && !seen.contains(&d) {
+            seen.push(d);
+        }
+    }
+    result.defects = seen;
+    fs::write(&path, serde_yaml::to_string(&result)?)?;
+    Ok(result)
 }
 
 /// Update a run's lifecycle state.

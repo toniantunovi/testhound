@@ -15,6 +15,7 @@ import { useSession } from "@/store/session";
 import { useActivity } from "@/store/activity";
 import { cn, initials, relativeTime } from "@/lib/utils";
 import { AutomationBadge, PriorityBadge } from "@/components/ui/Badge";
+import { ReferenceEditor } from "@/components/ui/Reference";
 
 /** Row-level result setter, shared with the run table. Untested has no button;
  *  it's the default. */
@@ -39,6 +40,7 @@ export function RunCasePanel({
   onNav,
   onSetStatus,
   onSetComment,
+  onSetDefects,
 }: {
   row: RunResultRow;
   index: number;
@@ -48,6 +50,7 @@ export function RunCasePanel({
   onNav: (dir: -1 | 1) => void;
   onSetStatus: (status: ResultStatus) => void;
   onSetComment: (comment: string) => void;
+  onSetDefects: (defects: string[]) => void;
 }) {
   const openCase = useSession((s) => s.openCase);
 
@@ -302,6 +305,19 @@ export function RunCasePanel({
           <p className="mt-1 text-[11px] text-text-muted">
             The comment is saved when you click away from the field.
           </p>
+          <div className="mt-3">
+            <span className="mb-1 block text-[11px] font-medium uppercase tracking-wider text-text-muted">
+              References
+            </span>
+            <ReferenceEditor
+              references={row.defects}
+              onChange={onSetDefects}
+              layout="inline"
+            />
+            <p className="mt-1 text-[11px] text-text-muted">
+              A bug found here is linked to this run, not to the case itself.
+            </p>
+          </div>
         </div>
       </div>
     </div>

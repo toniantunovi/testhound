@@ -29,6 +29,7 @@ import {
   RunStateBadge,
 } from "@/components/ui/Badge";
 import { RunProgressBar } from "@/components/ui/RunProgressBar";
+import { ReferenceEditor } from "@/components/ui/Reference";
 import { Button } from "@/components/ui/Button";
 
 /** The status buckets a run's case list can be filtered by, in the order they
@@ -132,6 +133,13 @@ export function RunView() {
       void track("result_recorded", { source: "manual" });
       invalidate();
     },
+  });
+
+  const setDefects = useMutation({
+    mutationFn: (v: { caseId: string; defects: string[] }) =>
+      api.setResultDefects(id!, v.caseId, v.defects),
+    onSuccess: invalidate,
+    onError: (e) => useActivity.getState().push(`x ${errMsg(e)}`),
   });
 
   const setState = useMutation({
@@ -371,6 +379,9 @@ export function RunView() {
                       comment,
                     })
                   }
+                  onSetDefects={(defects) =>
+                    setDefects.mutate({ caseId: row.case, defects })
+                  }
                   onTriage={() =>
                     setTriage({ caseId: row.case, title: row.title })
                   }
@@ -415,6 +426,9 @@ export function RunView() {
               comment,
             })
           }
+          onSetDefects={(defects) =>
+            setDefects.mutate({ caseId: panelRow.case, defects })
+          }
         />
       )}
     </div>
@@ -426,6 +440,7 @@ function CaseRow({
   pending,
   onSetStatus,
   onSetComment,
+  onSetDefects,
   onTriage,
   onOpen,
 }: {
@@ -433,6 +448,7 @@ function CaseRow({
   pending: boolean;
   onSetStatus: (status: ResultStatus) => void;
   onSetComment: (comment: string) => void;
+  onSetDefects: (defects: string[]) => void;
   onTriage: () => void;
   onOpen: () => void;
 }) {
@@ -487,6 +503,14 @@ function CaseRow({
           placeholder="Add a comment"
           className="mt-2 h-7 w-full max-w-md rounded-control border border-border-subtle bg-bg-base px-2 text-xs text-text-primary placeholder:text-text-muted focus:border-border-strong focus:outline-none"
         />
+        <div className="mt-1.5">
+          <ReferenceEditor
+            references={row.defects}
+            onChange={onSetDefects}
+            layout="inline"
+            collapsible
+          />
+        </div>
         {row.evidence.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {row.evidence.map((path) => {
