@@ -514,7 +514,12 @@ fn index_conflict_count(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
-const AUTOSTASH_CONFLICT: &str = "Applying autostash resulted in conflicts";
+/// The tail both of git's autostash-conflict wordings share: "Applying
+/// autostash resulted in conflicts" (git < 2.50) and "Your local changes are
+/// stashed, however applying them\nresulted in conflicts" (2.50 and later).
+/// Only reached on a pull that otherwise succeeded, where the stash re-apply
+/// is the only thing that can have conflicted.
+const AUTOSTASH_CONFLICT: &str = "resulted in conflicts";
 
 /// Fast-forward pull then push. Never destructive: `--ff-only` refuses to
 /// create a merge, so a diverged branch is reported (`Diverged`) for the user
