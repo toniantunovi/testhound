@@ -82,6 +82,7 @@ TestHound keeps itself up to date via the in-app updater (**Settings › Updates
 - Scaffolds or opens a `testhound/` directory in any Git repository and reads/writes the plain-file format.
 - Dashboard, test case list, and a full test case editor with structured steps and expectations.
 - Suites with folders, drag-and-drop ordering of suites, folders, and cases, milestones, and configurations.
+- A case carries as many types as it needs: a functional test that is also part of the regression sweep says both, and a bulk edit adds or removes one across a selection without flattening the rest.
 - Search by title, tag, case id, or ticket reference: the number alone is enough (`4821` finds `AB-4821`).
 
   </td>
@@ -89,7 +90,7 @@ TestHound keeps itself up to date via the in-app updater (**Settings › Updates
 
 **Runs and results**
 
-- Build runs from a suite, a filter query, or a hand-picked set of cases.
+- Build runs from a suite, a filter, or a hand-picked set of cases. The filter is a facet picker (type, suite, priority, status, tags) over the query language, so "every regression case in checkout" is a couple of clicks; the query itself stays editable.
 - Record manual results with per-case history; the dashboard reflects real run data.
 
   </td>

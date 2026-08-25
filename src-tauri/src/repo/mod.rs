@@ -8,8 +8,8 @@ pub mod case_file;
 pub mod runs;
 
 use crate::domain::{
-    parse_body, Automation, AutomationState, CaseStatus, CaseType, FrontMatter, Priority, Project,
-    Section, Suite, TestCase,
+    default_kinds, normalize_kinds, parse_body, Automation, AutomationState, CaseStatus, CaseType,
+    FrontMatter, Priority, Project, Section, Suite, TestCase,
 };
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
@@ -57,8 +57,10 @@ pub struct CaseSummary {
     /// Manual sort position within the suite/section; `None` when never reordered.
     pub order: Option<i64>,
     pub priority: Priority,
+    /// The kinds this case belongs to, never empty; the first is the one a
+    /// one-line row leads with.
     #[serde(rename = "type")]
-    pub kind: CaseType,
+    pub kinds: Vec<CaseType>,
     pub status: CaseStatus,
     pub owner: Option<String>,
     pub tags: Vec<String>,
@@ -278,7 +280,7 @@ pub fn list_cases(paths: &Paths) -> Result<Vec<CaseSummary>> {
             section: front.section,
             order: front.order,
             priority: front.priority,
-            kind: front.kind,
+            kinds: front.kinds,
             status: front.status,
             owner: front.owner,
             tags: front.tags,
@@ -338,7 +340,7 @@ fn broken_summary(fm: &str, path: &Path, rel: String) -> CaseSummary {
         section: None,
         order: None,
         priority: Priority::default(),
-        kind: CaseType::default(),
+        kinds: default_kinds(),
         status: CaseStatus::default(),
         owner: None,
         tags: vec![],
@@ -607,39 +609,72 @@ fn set_case_order(path: &Path, order: i64) -> Result<()> {
 }
 
 /// The front-matter fields a bulk edit can set, as the case list's selection bar
-/// sends them; a `None` leaves that field as it is. Only closed-vocabulary
-/// fields are offered: their values are bare words, so they can be written into
-/// the file without quoting or reformatting anything around them.
+/// sends them; a `None` (or an empty list) leaves that field as it is. Only
+/// closed-vocabulary fields are offered: their values are bare words, so they can
+/// be written into the file without quoting or reformatting anything around them.
+///
+/// `type` is plural, so it is edited by difference rather than replacement: a
+/// selection whose cases each carry their own kinds has no single "current"
+/// value to overwrite, and the point of the field is that a case is several
+/// things at once. Adding `regression` to fifty cases must not flatten what they
+/// already are.
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaseFields {
     #[serde(default)]
     pub priority: Option<Priority>,
-    #[serde(default, rename = "type")]
-    pub kind: Option<CaseType>,
     #[serde(default)]
     pub status: Option<CaseStatus>,
+    /// Kinds to add to every case's `type:`, keeping the ones it has.
+    #[serde(default)]
+    pub type_add: Vec<CaseType>,
+    /// Kinds to drop from every case's `type:`. A case may not lose its last
+    /// one: `type` has a default, not an empty state.
+    #[serde(default)]
+    pub type_remove: Vec<CaseType>,
 }
 
+/// Where a front-matter key goes in a case that does not carry it yet: after the
+/// last of these it does have, so it lands in the documented key order
+/// (docs/03-data-model.md) rather than wherever is convenient.
+const AFTER_PRIORITY: &[&str] = &["order", "section", "suite"];
+const AFTER_TYPE: &[&str] = &["priority", "order", "section", "suite"];
+const AFTER_STATUS: &[&str] = &["type", "priority", "order", "section", "suite"];
+
 impl CaseFields {
-    /// The edits to apply: the front-matter key, the word to write, and the keys
-    /// a missing one may be inserted after, so a case that never carried the key
-    /// gains it in the documented order (docs/03-data-model.md) rather than
-    /// wherever it is convenient.
-    fn edits(&self) -> Result<Vec<(&'static str, String, &'static [&'static str])>> {
-        const AFTER_PRIORITY: &[&str] = &["order", "section", "suite"];
-        const AFTER_TYPE: &[&str] = &["priority", "order", "section", "suite"];
-        const AFTER_STATUS: &[&str] = &["type", "priority", "order", "section", "suite"];
+    /// The scalar edits to apply to every case alike: the front-matter key, the
+    /// word to write, and the keys a missing one may be inserted after.
+    fn scalar_edits(&self) -> Result<Vec<(&'static str, String, &'static [&'static str])>> {
         let mut edits: Vec<(&'static str, String, &'static [&'static str])> = vec![];
         if let Some(p) = &self.priority {
             edits.push(("priority", yaml_word(p)?, AFTER_PRIORITY));
-        }
-        if let Some(k) = &self.kind {
-            edits.push(("type", yaml_word(k)?, AFTER_TYPE));
         }
         if let Some(st) = &self.status {
             edits.push(("status", yaml_word(st)?, AFTER_STATUS));
         }
         Ok(edits)
+    }
+
+    fn touches_type(&self) -> bool {
+        !self.type_add.is_empty() || !self.type_remove.is_empty()
+    }
+
+    /// This case's kinds after the requested additions and removals: removals
+    /// first, then additions appended in the order they were asked for, so a kind
+    /// in both lists ends up present. `None` when nothing would be left, which is
+    /// the caller's cue to refuse rather than write a case with no type.
+    fn apply_to_kinds(&self, current: &[CaseType]) -> Option<Vec<CaseType>> {
+        let mut next: Vec<CaseType> = current
+            .iter()
+            .copied()
+            .filter(|k| !self.type_remove.contains(k))
+            .collect();
+        for kind in &self.type_add {
+            if !next.contains(kind) {
+                next.push(*kind);
+            }
+        }
+        (!next.is_empty()).then(|| normalize_kinds(next))
     }
 }
 
@@ -650,7 +685,7 @@ fn yaml_word<T: Serialize>(value: &T) -> Result<String> {
 }
 
 /// Set the same front-matter fields on every one of `ids`, one file at a time.
-/// Each file is edited line by line (see `case_file::set_scalar`), so a case
+/// Each file is edited line by line (see `case_file::set_scalar`/`set_list`), so a case
 /// that already holds the value is left byte-for-byte alone and nothing else in
 /// its front matter is reformatted. Returns the ids that actually changed.
 ///
@@ -658,14 +693,27 @@ fn yaml_word<T: Serialize>(value: &T) -> Result<String> {
 /// new values rather than being rolled back, and the caller reports the error so
 /// a partly applied change is never silent.
 pub fn set_case_fields(paths: &Paths, ids: &[String], fields: &CaseFields) -> Result<Vec<String>> {
-    let edits = fields.edits()?;
-    if ids.is_empty() || edits.is_empty() {
+    let edits = fields.scalar_edits()?;
+    if ids.is_empty() || (edits.is_empty() && !fields.touches_type()) {
         return Ok(vec![]);
     }
     // Take each case's path from the listing rather than resolving it by id
     // again, the way a reorder does: a bulk write must never land in a different
     // file than the one the list showed.
     let known = list_cases(paths)?;
+    // Every ticked case's kinds are known before anything is written, so a
+    // removal that cannot go through says so up front rather than halfway,
+    // leaving the selection half-changed.
+    if fields.touches_type() {
+        for case in ids.iter().filter_map(|id| known.iter().find(|c| &c.id == id)) {
+            if fields.apply_to_kinds(&case.kinds).is_none() {
+                return Err(Error::Other(format!(
+                    "{} would be left with no type; a case keeps at least one",
+                    case.id
+                )));
+            }
+        }
+    }
     let mut changed = Vec::new();
     for id in ids {
         let mut matching = known.iter().filter(|c| &c.id == id);
@@ -690,6 +738,19 @@ pub fn set_case_fields(paths: &Paths, ids: &[String], fields: &CaseFields) -> Re
         let mut touched = false;
         for (key, value, after) in &edits {
             if let Some(patched) = case_file::set_scalar(&content, key, value, after)? {
+                content = patched;
+                touched = true;
+            }
+        }
+        // `type` is computed per case: what it becomes depends on what it is.
+        // Validated before the loop, so `None` is unreachable here.
+        if let Some(next) = fields
+            .touches_type()
+            .then(|| fields.apply_to_kinds(&case.kinds))
+            .flatten()
+        {
+            let words: Vec<String> = next.iter().map(yaml_word).collect::<Result<_>>()?;
+            if let Some(patched) = case_file::set_list(&content, "type", &words, AFTER_TYPE)? {
                 content = patched;
                 touched = true;
             }
@@ -851,7 +912,7 @@ pub fn new_case(id: String, title: String, suite: String, body: &str) -> TestCas
             section: None,
             order: None,
             priority: Priority::default(),
-            kind: CaseType::default(),
+            kinds: default_kinds(),
             status: CaseStatus::default(),
             owner: None,
             tags: vec![],

@@ -4,9 +4,9 @@
 
 use std::path::PathBuf;
 use testhound_lib::app::sample;
-use testhound_lib::domain::{IncludeMode, ResultSource, ResultStatus, RunState};
+use testhound_lib::domain::{CaseType, IncludeMode, ResultSource, ResultStatus, RunState};
 use testhound_lib::repo::runs::{self, CreateRun};
-use testhound_lib::repo::{self, Paths};
+use testhound_lib::repo::{self, CaseFields, Paths};
 
 fn tmp_repo() -> PathBuf {
     // Parallel tests can read the same nanosecond; the counter keeps each repo
@@ -133,6 +133,90 @@ fn seed_list_and_record_results() {
 
     // Now four runs total.
     assert_eq!(runs::list_runs(&paths).unwrap().len(), 4);
+
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The scenario a plural `type` exists for: a case is a functional test *and*
+/// part of the regression sweep, and starting a regression run is then a matter
+/// of asking for that type rather than hand-picking cases.
+#[test]
+fn a_regression_run_takes_every_case_of_that_type() {
+    let root = tmp_repo();
+    let th = "testhound";
+    repo::scaffold(&root, "Acme Shop", th).unwrap();
+    let paths = Paths::new(&root, th);
+    sample::seed(&paths).unwrap();
+
+    // TC-0002 is a negative test; mark it as part of the sweep as well, the way
+    // the case list's bulk edit does.
+    repo::set_case_fields(
+        &paths,
+        &["TC-0002".to_string()],
+        &CaseFields {
+            type_add: vec![CaseType::Regression],
+            ..CaseFields::default()
+        },
+    )
+    .unwrap();
+
+    let all = repo::list_cases(&paths).unwrap();
+    let tc2 = all.iter().find(|c| c.id == "TC-0002").unwrap();
+    // It gained the kind without losing the one it had.
+    assert_eq!(tc2.kinds, vec![CaseType::Negative, CaseType::Regression]);
+    let mut expected: Vec<String> = all
+        .iter()
+        .filter(|c| c.kinds.contains(&CaseType::Regression))
+        .map(|c| c.id.clone())
+        .collect();
+    expected.sort();
+    assert!(expected.len() > 1 && expected.contains(&"TC-0002".to_string()));
+
+    let run = runs::create_run(
+        &paths,
+        CreateRun {
+            name: "Regression R4".into(),
+            milestone: None,
+            configuration: vec![],
+            description: None,
+            assignee: None,
+            mode: IncludeMode::Filter,
+            query: Some("type:regression".into()),
+            suites: vec![],
+            cases: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(run.includes.cases, expected);
+
+    // A comma list keeps the either-or inside the term, so it survives being
+    // ANDed with the suite: the two facets a picker would tick.
+    let scoped = runs::create_run(
+        &paths,
+        CreateRun {
+            name: "Checkout regression".into(),
+            milestone: None,
+            configuration: vec![],
+            description: None,
+            assignee: None,
+            mode: IncludeMode::Filter,
+            query: Some("type:regression,smoke AND suite:checkout".into()),
+            suites: vec![],
+            cases: vec![],
+        },
+    )
+    .unwrap();
+    assert!(!scoped.includes.cases.is_empty());
+    let members = repo::list_cases(&paths).unwrap();
+    for id in &scoped.includes.cases {
+        let c = members.iter().find(|c| &c.id == id).unwrap();
+        assert_eq!(c.suite, "checkout", "{id}");
+        assert!(
+            c.kinds.contains(&CaseType::Regression) || c.kinds.contains(&CaseType::Smoke),
+            "{id}"
+        );
+    }
+    assert!(!scoped.includes.cases.contains(&"TC-0002".to_string()), "auth is not checkout");
 
     std::fs::remove_dir_all(&root).ok();
 }

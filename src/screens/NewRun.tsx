@@ -1,9 +1,17 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Play } from "lucide-react";
 import { api } from "@/lib/ipc";
 import { countBucket, track } from "@/lib/telemetry";
-import type { IncludeMode } from "@/lib/types";
+import type { CaseStatus, CaseType, IncludeMode, Priority } from "@/lib/types";
+import {
+  buildQuery,
+  emptyFacets,
+  facetCount,
+  parseQuery,
+  type FacetKey,
+  type Facets,
+} from "@/lib/query";
 import { useSession } from "@/store/session";
 import { cn } from "@/lib/utils";
 import { PriorityBadge } from "@/components/ui/Badge";
@@ -11,9 +19,26 @@ import { Button } from "@/components/ui/Button";
 
 const MODES: { id: IncludeMode; label: string; blurb: string }[] = [
   { id: "suite", label: "Whole suites", blurb: "Every case in the chosen suites" },
-  { id: "filter", label: "Filter query", blurb: "Cases matching a saved query" },
+  { id: "filter", label: "Filter", blurb: "Cases matching a filter, e.g. every regression case" },
   { id: "explicit", label: "Hand-picked", blurb: "A specific set of cases" },
 ];
+
+const TYPES: CaseType[] = [
+  "functional",
+  "regression",
+  "smoke",
+  "e2e",
+  "negative",
+  "a11y",
+  "perf",
+];
+const PRIORITIES: Priority[] = ["critical", "high", "medium", "low"];
+const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
+
+/** How many tags the picker offers before the rest are left to the query box.
+ *  The most-used ones first: a project's tag vocabulary has no natural bound,
+ *  and a wall of chips is no easier to use than typing. */
+const TAG_CHIPS = 12;
 
 export function NewRun() {
   const navigate = useSession((s) => s.navigate);
@@ -26,9 +51,13 @@ export function NewRun() {
   const [description, setDescription] = useState("");
   const [config, setConfig] = useState<string[]>([]);
   const [mode, setMode] = useState<IncludeMode>("suite");
-  const [query, setQuery] = useState("suite:checkout OR tag:p1");
   const [suites, setSuites] = useState<string[]>([]);
   const [picked, setPicked] = useState<string[]>([]);
+  // Filter mode: ticked facets, or a hand-written query once the user asks to
+  // edit one. The query is what the run stores either way (see `buildQuery`).
+  const [facets, setFacets] = useState<Facets>(emptyFacets);
+  const [queryText, setQueryText] = useState("");
+  const [handWritten, setHandWritten] = useState(false);
 
   const { data: suiteTree = [] } = useQuery({
     queryKey: ["suites"],
@@ -46,6 +75,45 @@ export function NewRun() {
     queryKey: ["cases"],
     queryFn: api.listCases,
   });
+
+  const query = handWritten ? queryText : buildQuery(facets);
+
+  // The values each facet offers. Suites and tags come from the project, so a
+  // parsed query can only tick what actually exists.
+  const tagOptions = useMemo(() => {
+    const uses = new Map<string, number>();
+    for (const c of allCases) {
+      for (const t of c.tags) uses.set(t, (uses.get(t) ?? 0) + 1);
+    }
+    return [...uses.entries()]
+      // A tag holding a comma or a space cannot be written as a term: the comma
+      // is the term's either-or and whitespace separates terms. Leaving such a
+      // tag out beats generating a query that means something else.
+      .filter(([tag]) => !/[\s,]/.test(tag))
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([tag]) => tag);
+  }, [allCases]);
+  const allowed: Record<FacetKey, readonly string[]> = useMemo(
+    () => ({
+      suite: suiteTree.map((s) => s.id),
+      type: TYPES,
+      priority: PRIORITIES,
+      status: STATUSES,
+      tag: tagOptions,
+    }),
+    [suiteTree, tagOptions],
+  );
+  // A hand-written query goes back to the picker only when the chips can say
+  // exactly what it says; otherwise the box keeps it.
+  const reopenable = handWritten ? parseQuery(queryText, allowed) : null;
+
+  const toggleFacet = (key: FacetKey, value: string) =>
+    setFacets((f) => ({
+      ...f,
+      [key]: f[key].includes(value)
+        ? f[key].filter((v) => v !== value)
+        : [...f[key], value],
+    }));
 
   // Live resolution of the current definition to a preview set.
   const { data: preview = [], isFetching } = useQuery({
@@ -227,22 +295,117 @@ export function NewRun() {
             )}
 
             {mode === "filter" && (
-              <Field label="Query">
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  spellCheck={false}
-                  className="h-9 w-full rounded-control border border-border-subtle bg-bg-base px-3 font-mono text-[13px] text-text-primary focus:border-border-strong focus:outline-none"
-                />
-                <p className="mt-1.5 text-xs text-text-muted">
-                  Terms like{" "}
-                  <code className="text-text-secondary">suite:checkout</code>,{" "}
-                  <code className="text-text-secondary">tag:p1</code>,{" "}
-                  <code className="text-text-secondary">priority:high</code>,{" "}
-                  <code className="text-text-secondary">ref:4821</code>, joined by{" "}
-                  <code className="text-text-secondary">AND</code> /{" "}
-                  <code className="text-text-secondary">OR</code>.
-                </p>
+              <Field label="Filter">
+                {handWritten ? (
+                  <>
+                    <input
+                      value={queryText}
+                      onChange={(e) => setQueryText(e.target.value)}
+                      spellCheck={false}
+                      className="h-9 w-full rounded-control border border-border-subtle bg-bg-base px-3 font-mono text-[13px] text-text-primary focus:border-border-strong focus:outline-none"
+                    />
+                    <div className="mt-1.5 flex items-start justify-between gap-3">
+                      <p className="text-xs text-text-muted">
+                        Terms like{" "}
+                        <code className="text-text-secondary">suite:checkout</code>,{" "}
+                        <code className="text-text-secondary">tag:p1</code>,{" "}
+                        <code className="text-text-secondary">
+                          type:regression,smoke
+                        </code>{" "}
+                        (either), joined by{" "}
+                        <code className="text-text-secondary">AND</code> /{" "}
+                        <code className="text-text-secondary">OR</code>.
+                      </p>
+                      <TextButton
+                        disabled={
+                          reopenable
+                            ? undefined
+                            : "This query says more than the picker can show"
+                        }
+                        onClick={() => {
+                          if (reopenable) setFacets(reopenable);
+                          setHandWritten(false);
+                        }}
+                      >
+                        Back to picker
+                      </TextButton>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="rounded-card border border-border-subtle bg-bg-surface px-3 py-1.5">
+                      <FacetRow
+                        label="Type"
+                        options={TYPES.map((t) => ({ value: t, label: t }))}
+                        active={facets.type}
+                        onToggle={(v) => toggleFacet("type", v)}
+                      />
+                      <FacetRow
+                        label="Suite"
+                        // A ticked suite stays listed even if the project no
+                        // longer has it (a branch switch away), so it can be
+                        // un-ticked rather than filtering invisibly.
+                        options={[
+                          ...suiteTree.map((s) => ({
+                            value: s.id,
+                            label: s.name,
+                          })),
+                          ...facets.suite
+                            .filter((id) => !suiteTree.some((s) => s.id === id))
+                            .map((id) => ({ value: id, label: id })),
+                        ]}
+                        active={facets.suite}
+                        onToggle={(v) => toggleFacet("suite", v)}
+                      />
+                      <FacetRow
+                        label="Priority"
+                        options={PRIORITIES.map((p) => ({ value: p, label: p }))}
+                        active={facets.priority}
+                        onToggle={(v) => toggleFacet("priority", v)}
+                      />
+                      <FacetRow
+                        label="Status"
+                        options={STATUSES.map((st) => ({
+                          value: st,
+                          label: st,
+                        }))}
+                        active={facets.status}
+                        onToggle={(v) => toggleFacet("status", v)}
+                      />
+                      <FacetRow
+                        label="Tags"
+                        // Ticked tags stay visible even past the cap, so a tag
+                        // the picker did not offer can still be un-ticked.
+                        options={[
+                          ...new Set([
+                            ...facets.tag,
+                            ...tagOptions.slice(0, TAG_CHIPS),
+                          ]),
+                        ].map((t) => ({ value: t, label: t }))}
+                        active={facets.tag}
+                        onToggle={(v) => toggleFacet("tag", v)}
+                      />
+                    </div>
+                    <div className="mt-1.5 flex items-start justify-between gap-3">
+                      <p className="font-mono text-[11px] leading-5 text-text-muted">
+                        {query || "no filter: every case"}
+                      </p>
+                      <TextButton
+                        onClick={() => {
+                          setQueryText(buildQuery(facets));
+                          setHandWritten(true);
+                        }}
+                      >
+                        Edit as query
+                      </TextButton>
+                    </div>
+                    {facetCount(facets) > 0 && (
+                      <p className="mt-1 text-xs text-text-muted">
+                        Values in one row match either; the rows are combined.
+                      </p>
+                    )}
+                  </>
+                )}
               </Field>
             )}
 
@@ -329,6 +492,67 @@ function Field({
       </label>
       {children}
     </div>
+  );
+}
+
+/** One facet's values as chips. Ticking two in a row means either of them; the
+ *  rows are ANDed with each other. */
+function FacetRow({
+  label,
+  options,
+  active,
+  onToggle,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  active: string[];
+  onToggle: (value: string) => void;
+}) {
+  if (options.length === 0) return null;
+  return (
+    <div className="flex gap-3 border-b border-border-subtle/60 py-1.5 last:border-0">
+      <span className="w-14 shrink-0 pt-1.5 text-[11px] uppercase tracking-wide text-text-muted">
+        {label}
+      </span>
+      <div className="flex flex-wrap gap-1.5 py-0.5">
+        {options.map((o) => (
+          <Chip
+            key={o.value}
+            active={active.includes(o.value)}
+            onClick={() => onToggle(o.value)}
+          >
+            <span className="capitalize">{o.label}</span>
+          </Chip>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** A quiet inline action. `disabled` carries the reason, shown on hover. */
+function TextButton({
+  disabled,
+  onClick,
+  children,
+}: {
+  disabled?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled !== undefined}
+      title={disabled}
+      className={cn(
+        "shrink-0 text-xs",
+        disabled !== undefined
+          ? "cursor-not-allowed text-text-muted/60"
+          : "text-text-secondary hover:text-text-primary",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

@@ -65,7 +65,10 @@ Front-matter keys, in this order (omit optional keys when empty, never write
   multiples of 10 (10, 20, 30, ...). Omit it unless you are deliberately
   ordering a whole group; cases without it sort after the ordered ones, by id.
 - priority  (default medium)  one of: low | medium | high | critical
-- type      (default functional)  one of: functional | regression | smoke | e2e | negative | a11y | perf
+- type      (default functional)  one or more of: functional | regression | smoke | e2e | negative | a11y | perf.
+  One is a bare word (`type: functional`); several are a block sequence, like
+  `tags`. A case that is both a functional test and part of the regression sweep
+  says so here rather than picking one.
 - status    (default active)  one of: draft | active | deprecated
 - owner     (optional)  a short username
 - tags      (optional)  a YAML list of strings

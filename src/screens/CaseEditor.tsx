@@ -302,10 +302,9 @@ export function CaseEditor() {
             />
           </Field>
           <Field label="Type">
-            <Select
+            <TypePicker
               value={draft.type}
-              options={TYPES}
-              onChange={(v) => patch({ type: v as CaseType })}
+              onChange={(type) => patch({ type })}
             />
           </Field>
           <Field label="Status">
@@ -683,6 +682,46 @@ function Field({
         {label}
       </label>
       {children}
+    </div>
+  );
+}
+
+/** The `type:` field. A case is often several kinds at once (a functional test
+ *  that is also part of the regression sweep), so these toggle instead of a
+ *  select replacing one with another. The last kind cannot be untoggled: the
+ *  field has a default, not an empty state. */
+function TypePicker({
+  value,
+  onChange,
+}: {
+  value: CaseType[];
+  onChange: (v: CaseType[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {TYPES.map((t) => {
+        const on = value.includes(t);
+        const last = on && value.length === 1;
+        return (
+          <button
+            key={t}
+            onClick={() =>
+              onChange(on ? value.filter((v) => v !== t) : [...value, t])
+            }
+            disabled={last}
+            title={last ? "A case keeps at least one type" : undefined}
+            className={cn(
+              "rounded-control border px-1.5 py-0.5 text-xs capitalize",
+              on
+                ? "border-brand-primary/50 bg-brand-primary/10 text-text-primary"
+                : "border-border-subtle text-text-muted hover:border-border-strong hover:text-text-secondary",
+              last && "cursor-not-allowed",
+            )}
+          >
+            {t}
+          </button>
+        );
+      })}
     </div>
   );
 }

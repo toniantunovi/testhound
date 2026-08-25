@@ -24,6 +24,9 @@ impl Default for Priority {
     }
 }
 
+/// One kind of test. A case carries one or more of these (see
+/// [`normalize_kinds`]): most of them say what the test does, while
+/// `Regression` says when it gets run, so a case is commonly both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CaseType {
@@ -40,6 +43,70 @@ impl Default for CaseType {
     fn default() -> Self {
         CaseType::Functional
     }
+}
+
+/// The kinds a case belongs to: de-duplicated, in the order they were written,
+/// and never empty. Order is meaningful only for display (the first is the one
+/// a one-line summary leads with); selection treats them as a set.
+pub fn normalize_kinds(kinds: Vec<CaseType>) -> Vec<CaseType> {
+    let mut out: Vec<CaseType> = Vec::with_capacity(kinds.len().max(1));
+    for kind in kinds {
+        if !out.contains(&kind) {
+            out.push(kind);
+        }
+    }
+    if out.is_empty() {
+        out.push(CaseType::default());
+    }
+    out
+}
+
+/// What a case with no `type:` at all is: one `functional` kind, the same
+/// default the key had while it was single-valued.
+pub fn default_kinds() -> Vec<CaseType> {
+    vec![CaseType::default()]
+}
+
+/// Read both spellings of `type:`: the bare word every case file written so far
+/// carries (`type: functional`) and a list of them (`type: [functional,
+/// regression]`, or a block sequence). Neither has to be migrated.
+///
+/// Hand-written by visitor rather than by an untagged enum: `type:` is the one
+/// key people mistype, and an untagged enum reports only that nothing matched,
+/// where this still names the words it could have been.
+fn de_kinds<'de, D>(d: D) -> std::result::Result<Vec<CaseType>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct Kinds;
+
+    impl<'de> serde::de::Visitor<'de> for Kinds {
+        type Value = Vec<CaseType>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a test type or a list of test types")
+        }
+
+        fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            CaseType::deserialize(serde::de::value::StrDeserializer::new(value)).map(|k| vec![k])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+        where
+            A: serde::de::SeqAccess<'de>,
+        {
+            let mut kinds = Vec::new();
+            while let Some(kind) = seq.next_element()? {
+                kinds.push(kind);
+            }
+            Ok(normalize_kinds(kinds))
+        }
+    }
+
+    d.deserialize_any(Kinds)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -275,8 +342,11 @@ pub struct FrontMatter {
     pub order: Option<i64>,
     #[serde(default)]
     pub priority: Priority,
-    #[serde(rename = "type", default)]
-    pub kind: CaseType,
+    /// The kinds this case belongs to, never empty. Always a list here, so the
+    /// UI has one shape to read; it is `case_file::serialize` that writes a lone
+    /// kind back as the bare word the file had.
+    #[serde(rename = "type", default = "default_kinds", deserialize_with = "de_kinds")]
+    pub kinds: Vec<CaseType>,
     #[serde(default)]
     pub status: CaseStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -385,3 +455,4 @@ impl Default for Project {
         }
     }
 }
+

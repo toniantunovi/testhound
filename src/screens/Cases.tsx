@@ -13,6 +13,7 @@ import {
   FolderPlus,
   Filter,
   GripVertical,
+  Minus,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -74,8 +75,14 @@ const TYPES: CaseType[] = [
 const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
 
 /** The front-matter fields the selection bar can set in one go. Closed
- *  vocabularies only: those are the ones a menu can offer without an editor. */
-type BulkFields = { priority?: Priority; type?: CaseType; status?: CaseStatus };
+ *  vocabularies only: those are the ones a menu can offer without an editor.
+ *  `type` is plural, so it is edited by difference rather than replacement. */
+type BulkFields = {
+  priority?: Priority;
+  status?: CaseStatus;
+  typeAdd?: CaseType[];
+  typeRemove?: CaseType[];
+};
 
 /** One field the bulk menu offers: what to call it, what it accepts, how to read
  *  it off a case (to show what the selection has in common) and the change a
@@ -84,8 +91,18 @@ interface BulkField {
   key: string;
   label: string;
   options: readonly string[];
+  /** The field's value on one case, for the "what they share" readout. */
   of: (c: CaseSummary) => string;
-  patch: (value: string) => BulkFields;
+  /** Does this case carry this value? A plural field holds several at once. */
+  has: (c: CaseSummary, value: string) => boolean;
+  /** The change a picked value makes. `on` is false only for a plural field,
+   *  whose values are taken away by picking them again. */
+  patch: (value: string, on: boolean) => BulkFields;
+  /** A plural field ticks its values on and off instead of replacing one with
+   *  another, so a case can be several of them at once. */
+  plural?: boolean;
+  /** Why this value cannot be taken away from the ticked cases, if it cannot. */
+  blockedRemoval?: (cases: CaseSummary[], value: string) => string | null;
 }
 
 const BULK_FIELDS: BulkField[] = [
@@ -94,20 +111,33 @@ const BULK_FIELDS: BulkField[] = [
     label: "Priority",
     options: PRIORITIES,
     of: (c) => c.priority,
+    has: (c, v) => c.priority === v,
     patch: (v) => ({ priority: v as Priority }),
   },
   {
     key: "type",
     label: "Type",
     options: TYPES,
-    of: (c) => c.type,
-    patch: (v) => ({ type: v as CaseType }),
+    // Sorted, since this readout exists to say what the selection has in common:
+    // two cases holding the same kinds in a different order are not "Mixed".
+    of: (c) => [...c.type].sort().join(", "),
+    has: (c, v) => c.type.includes(v as CaseType),
+    plural: true,
+    patch: (v, on) =>
+      on ? { typeAdd: [v as CaseType] } : { typeRemove: [v as CaseType] },
+    // A case always has a type: the last one is not removable, here or in the
+    // backend, which refuses the write rather than leaving a case with none.
+    blockedRemoval: (cases, v) =>
+      cases.some((c) => c.type.length === 1 && c.type[0] === v)
+        ? "A case keeps at least one type"
+        : null,
   },
   {
     key: "status",
     label: "Status",
     options: STATUSES,
     of: (c) => c.status,
+    has: (c, v) => c.status === v,
     patch: (v) => ({ status: v as CaseStatus }),
   },
 ];
@@ -132,6 +162,7 @@ export function Cases() {
 
   const [query, setQuery] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
+  const [typeFilter, setTypeFilter] = useState<CaseType | "all">("all");
   /** Case shown in the preview panel on the right (single click). */
   const [previewId, setPreviewId] = useState<string | null>(null);
   /** Cases ticked for a bulk move. */
@@ -355,9 +386,11 @@ export function Cases() {
       if (selectedSuite !== "all" && c.suite !== selectedSuite) return false;
       if (selectedSection && c.section !== selectedSection) return false;
       if (priorityFilter !== "all" && c.priority !== priorityFilter) return false;
+      // A case has several types; the filter asks whether it is one of them.
+      if (typeFilter !== "all" && !c.type.includes(typeFilter)) return false;
       return matchesCase(c, query);
     });
-  }, [cases, selectedSuite, selectedSection, query, priorityFilter]);
+  }, [cases, selectedSuite, selectedSection, query, priorityFilter, typeFilter]);
 
   /** Rows in tree order: suite, then folder, then the manual per-case order. */
   const sorted = useMemo(() => sortCases(filtered, suites), [filtered, suites]);
@@ -370,7 +403,10 @@ export function Cases() {
   // narrows the rows: dropping a case between two visible rows has to mean the
   // same thing on disk, which it cannot when rows in between are filtered out.
   const reorderable =
-    !!activeSuite && !query.trim() && priorityFilter === "all";
+    !!activeSuite &&
+    !query.trim() &&
+    priorityFilter === "all" &&
+    typeFilter === "all";
 
   const groups: CaseGroup[] = useMemo(() => {
     if (!activeSuite) return groupBySuite(sorted, suites);
@@ -585,7 +621,20 @@ export function Cases() {
             <Button variant="secondary" size="md">
               <Filter size={13} /> Filters
             </Button>
-            <PriorityFilter value={priorityFilter} onChange={setPriorityFilter} />
+            <VocabFilter
+              name="Type"
+              emptyLabel="All types"
+              options={TYPES}
+              value={typeFilter}
+              onChange={(v) => setTypeFilter(v as CaseType | "all")}
+            />
+            <VocabFilter
+              name="Priority"
+              emptyLabel="All priorities"
+              options={PRIORITIES}
+              value={priorityFilter}
+              onChange={(v) => setPriorityFilter(v as Priority | "all")}
+            />
             <Button
               variant="primary"
               size="md"
@@ -698,15 +747,25 @@ function CaseDragGhost() {
   );
 }
 
-function PriorityFilter({
+/** One toolbar dropdown narrowing the list to a single value of a closed
+ *  vocabulary. `"all"` is the unset state. */
+function VocabFilter({
+  name,
+  emptyLabel,
+  options,
   value,
   onChange,
 }: {
-  value: Priority | "all";
-  onChange: (v: Priority | "all") => void;
+  /** What the button says while nothing is picked. */
+  name: string;
+  /** What the "no filter" row says, e.g. "All priorities". */
+  emptyLabel: string;
+  options: readonly string[];
+  value: string;
+  onChange: (v: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const label = value === "all" ? "Priority" : value;
+  const label = value === "all" ? name : value;
   return (
     <div className="relative">
       <button
@@ -725,19 +784,19 @@ function PriorityFilter({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-card border border-border-strong bg-bg-surface py-1 shadow-xl">
-            {(["all", ...PRIORITIES] as const).map((p) => (
+            {["all", ...options].map((o) => (
               <button
-                key={p}
+                key={o}
                 onClick={() => {
-                  onChange(p);
+                  onChange(o);
                   setOpen(false);
                 }}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm capitalize text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary"
               >
                 <span className="w-3">
-                  {p === value && <Check size={12} className="text-brand-primary" />}
+                  {o === value && <Check size={12} className="text-brand-primary" />}
                 </span>
-                {p === "all" ? "All priorities" : p}
+                {o === "all" ? emptyLabel : o}
               </button>
             ))}
           </div>
@@ -1192,7 +1251,10 @@ function BulkEditMenu({
                     label={f.label}
                     trailing={
                       <>
-                        <span className="capitalize text-text-muted">
+                        {/* A plural field's readout can be long ("functional,
+                            regression"), so it truncates rather than pushing the
+                            chevron out of the panel. */}
+                        <span className="max-w-[8rem] truncate capitalize text-text-muted">
                           {shared(f) ?? "Mixed"}
                         </span>
                         <ChevronRight size={13} className="text-text-muted" />
@@ -1226,27 +1288,43 @@ function BulkEditMenu({
                   />
                 ) : (
                   <>
-                    <MenuHeading>Set {pane.label.toLowerCase()}</MenuHeading>
-                    {pane.options.map((o) => (
-                      <MenuItem
-                        key={o}
-                        label={o}
-                        capitalize
-                        // A spacer where the tick is not, so the values line up
-                        // in one column instead of shifting by a row.
-                        icon={
-                          shared(pane) === o ? (
-                            <Check size={12} className="text-brand-primary" />
-                          ) : (
-                            <span className="w-3" />
-                          )
-                        }
-                        onClick={() => {
-                          close();
-                          onSet(pane.patch(o));
-                        }}
-                      />
-                    ))}
+                    <MenuHeading>
+                      {pane.plural
+                        ? `Add or remove ${pane.label.toLowerCase()}`
+                        : `Set ${pane.label.toLowerCase()}`}
+                    </MenuHeading>
+                    {pane.options.map((o) => {
+                      // How much of the selection carries this value: all of it
+                      // (picking it takes it away), some, or none.
+                      const on = cases.filter((c) => pane.has(c, o)).length;
+                      const all = cases.length > 0 && on === cases.length;
+                      const blocked = all
+                        ? pane.blockedRemoval?.(cases, o) ?? null
+                        : null;
+                      return (
+                        <MenuItem
+                          key={o}
+                          label={o}
+                          capitalize
+                          disabled={blocked ?? undefined}
+                          // A spacer where the tick is not, so the values line
+                          // up in one column instead of shifting by a row.
+                          icon={
+                            all ? (
+                              <Check size={12} className="text-brand-primary" />
+                            ) : on > 0 && pane.plural ? (
+                              <Minus size={12} className="text-text-muted" />
+                            ) : (
+                              <span className="w-3" />
+                            )
+                          }
+                          onClick={() => {
+                            close();
+                            onSet(pane.patch(o, !(all && pane.plural)));
+                          }}
+                        />
+                      );
+                    })}
                   </>
                 )}
               </>
@@ -1271,6 +1349,7 @@ function MenuItem({
   icon,
   label,
   danger,
+  disabled,
   indent,
   capitalize,
   trailing,
@@ -1279,6 +1358,8 @@ function MenuItem({
   icon?: React.ReactNode;
   label: string;
   danger?: boolean;
+  /** Why this item cannot be picked, shown on hover. Absent when it can. */
+  disabled?: string;
   /** A folder listed under its suite in the "Move to" list. */
   indent?: boolean;
   /** A lowercase vocabulary word (`deprecated`, `smoke`) shown as a label. */
@@ -1290,10 +1371,14 @@ function MenuItem({
   return (
     <button
       onClick={onClick}
+      disabled={disabled !== undefined}
+      title={disabled}
       className={cn(
         "flex w-full items-center gap-2 py-1.5 pr-3 text-left text-sm",
         indent ? "pl-7" : "pl-3",
-        danger
+        disabled !== undefined
+          ? "cursor-not-allowed text-text-muted"
+          : danger
           ? "text-status-failed hover:bg-status-failed/10"
           : "text-text-secondary hover:bg-bg-surface-2 hover:text-text-primary",
       )}
@@ -1610,7 +1695,9 @@ function CaseTable({
                 <td className="py-2">
                   <PriorityBadge priority={c.priority} />
                 </td>
-                <td className="py-2 text-text-secondary">{c.type}</td>
+                <td className="py-2 capitalize text-text-secondary">
+                  {c.type.join(", ")}
+                </td>
                 <td className="py-2">
                   <AutomationBadge
                     state={c.automationState}
@@ -1827,7 +1914,9 @@ function CasePreview({
               state={c.automation.state}
               onClick={() => openAutomation(c.id)}
             />
-            <span className="text-xs capitalize text-text-secondary">{c.type}</span>
+            <span className="text-xs capitalize text-text-secondary">
+              {c.type.join(", ")}
+            </span>
             <span className="text-xs capitalize text-text-muted">{c.status}</span>
           </div>
 

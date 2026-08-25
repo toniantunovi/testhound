@@ -131,10 +131,18 @@ export const api = {
       normalizeCase,
     ),
   /** Set the same front-matter fields on many cases at once. Returns the ids
-   *  that changed; ones already holding the value are left untouched. */
+   *  that changed; ones already holding the value are left untouched.
+   *
+   *  `type` is plural, so it is edited by difference: `typeAdd` keeps whatever
+   *  kinds each case already has, and no case may lose its last one. */
   setCaseFields: (
     ids: string[],
-    fields: { priority?: Priority; type?: CaseType; status?: CaseStatus },
+    fields: {
+      priority?: Priority;
+      status?: CaseStatus;
+      typeAdd?: CaseType[];
+      typeRemove?: CaseType[];
+    },
   ) => invoke<string[]>("set_case_fields", { ids, fields }),
   duplicateCase: (id: string, suite?: string | null) =>
     invoke<TestCase>("duplicate_case", { id, suite: suite ?? null }).then(

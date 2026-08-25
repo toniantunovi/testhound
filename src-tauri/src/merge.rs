@@ -254,7 +254,15 @@ fn scalar_value(f: &FrontMatter, key: &str) -> Option<String> {
         "suite" => Some(f.suite.clone()),
         "section" => f.section.clone(),
         "priority" => Some(lower(&f.priority)),
-        "type" => Some(lower(&f.kind)),
+        // Several types read as one field here, the way tags do: a merge picks a
+        // side's whole `type:` list, not one kind out of it.
+        "type" => Some(
+            f.kinds
+                .iter()
+                .map(|k| lower(k))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
         "status" => Some(lower(&f.status)),
         "owner" => f.owner.clone(),
         "estimate" => f.estimate.clone(),
@@ -279,7 +287,7 @@ fn apply_scalar(target: &mut FrontMatter, key: &str, src: &FrontMatter) {
         "suite" => target.suite = src.suite.clone(),
         "section" => target.section = src.section.clone(),
         "priority" => target.priority = src.priority,
-        "type" => target.kind = src.kind,
+        "type" => target.kinds = src.kinds.clone(),
         "status" => target.status = src.status,
         "owner" => target.owner = src.owner.clone(),
         "estimate" => target.estimate = src.estimate.clone(),

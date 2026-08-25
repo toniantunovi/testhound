@@ -203,6 +203,13 @@ pub fn search_key(value: &str) -> String {
 /// AND-groups: `suite:checkout AND tag:p1 OR tag:smoke`. Bare terms match the
 /// id, title, tags, or references. `OR`/`AND` are case-insensitive keywords; an
 /// empty query matches everything.
+///
+/// A typed term takes several values, comma-separated (`type:regression,smoke`),
+/// and matches any of them. Without parentheses there is no other way to keep an
+/// either-or ANDed with the rest of the query, which is exactly what a facet
+/// with two values ticked needs. The whole value is tried as well, so a value
+/// that contains a comma itself still matches; `ref:` is never split, since it
+/// matches by substring and a fragment of a URL would match half the project.
 pub fn matches_query(c: &CaseSummary, query: &str) -> bool {
     let q = query.trim();
     if q.is_empty() {
@@ -255,34 +262,23 @@ fn term_matches(c: &CaseSummary, term: &str) -> bool {
         let key = key.trim().to_lowercase();
         QUERY_KEYS.contains(&key.as_str())
     });
-    if let Some((key, value)) = typed {
-        let value = value.trim().to_ascii_lowercase();
-        match key.trim().to_ascii_lowercase().as_str() {
-            "suite" => c.suite.eq_ignore_ascii_case(&value),
-            "section" => c
-                .section
-                .as_deref()
-                .map(|s| s.eq_ignore_ascii_case(&value))
-                .unwrap_or(false),
-            "tag" => c.tags.iter().any(|t| t.eq_ignore_ascii_case(&value)),
-            "priority" => enum_str(&c.priority) == value,
-            "type" => enum_str(&c.kind) == value,
-            "status" => enum_str(&c.status) == value,
-            "owner" => c
-                .owner
-                .as_deref()
-                .map(|o| o.eq_ignore_ascii_case(&value))
-                .unwrap_or(false),
-            "automation" => enum_str(&c.automation_state) == value,
-            // `ref:4821` finds a case referencing AB-4821: the separators and the
-            // project prefix are optional, so the number alone is enough.
-            "ref" | "reference" => {
-                let key = search_key(&value);
-                !key.is_empty() && c.references.iter().any(|r| search_key(r).contains(&key))
-            }
-            // Unreachable: QUERY_KEYS gates the branch.
-            _ => false,
+    if let Some((key, values)) = typed {
+        let key = key.trim().to_ascii_lowercase();
+        let whole = values.trim().to_ascii_lowercase();
+        // A reference is one value, always: it matches by substring, so a `,` in
+        // a URL's query string must not become two half-matching fragments.
+        if key == "ref" || key == "reference" {
+            return typed_matches(c, &key, &whole);
         }
+        // `type:regression,smoke` is one term that matches either. The whole
+        // value is tried too, so a term with no comma takes the same path, and a
+        // value that holds one (a tag may) still matches itself.
+        typed_matches(c, &key, &whole)
+            || whole
+                .split(',')
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .any(|value| typed_matches(c, &key, value))
     } else {
         // Unicode-aware lowercasing, matching the search box in the case list:
         // `über` has to find "Überprüfung" in both places.
@@ -295,6 +291,39 @@ fn term_matches(c: &CaseSummary, term: &str) -> bool {
             || (!key.is_empty()
                 && (search_key(&c.id).contains(&key)
                     || c.references.iter().any(|r| search_key(r).contains(&key))))
+    }
+}
+
+/// One `key:value` pair of a typed term, with both sides already lowercased and
+/// trimmed. `key` is one of [`QUERY_KEYS`].
+fn typed_matches(c: &CaseSummary, key: &str, value: &str) -> bool {
+    match key {
+        "suite" => c.suite.eq_ignore_ascii_case(value),
+        "section" => c
+            .section
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case(value))
+            .unwrap_or(false),
+        "tag" => c.tags.iter().any(|t| t.eq_ignore_ascii_case(value)),
+        "priority" => enum_str(&c.priority) == value,
+        // A case has several types, so `type:` asks whether it is one of
+        // them, not whether it is the only one.
+        "type" => c.kinds.iter().any(|k| enum_str(k) == value),
+        "status" => enum_str(&c.status) == value,
+        "owner" => c
+            .owner
+            .as_deref()
+            .map(|o| o.eq_ignore_ascii_case(value))
+            .unwrap_or(false),
+        "automation" => enum_str(&c.automation_state) == value,
+        // `ref:4821` finds a case referencing AB-4821: the separators and the
+        // project prefix are optional, so the number alone is enough.
+        "ref" | "reference" => {
+            let key = search_key(value);
+            !key.is_empty() && c.references.iter().any(|r| search_key(r).contains(&key))
+        }
+        // Unreachable: QUERY_KEYS gates the branch.
+        _ => false,
     }
 }
 
@@ -639,7 +668,13 @@ mod tests {
     use super::*;
     use crate::domain::{CaseStatus, CaseType};
 
-    fn case(id: &str, suite: &str, tags: &[&str], priority: Priority, kind: CaseType) -> CaseSummary {
+    fn case(
+        id: &str,
+        suite: &str,
+        tags: &[&str],
+        priority: Priority,
+        kinds: &[CaseType],
+    ) -> CaseSummary {
         CaseSummary {
             id: id.into(),
             title: format!("Case {id}"),
@@ -647,7 +682,7 @@ mod tests {
             section: None,
             order: None,
             priority,
-            kind,
+            kinds: kinds.to_vec(),
             status: CaseStatus::Active,
             owner: None,
             tags: tags.iter().map(|s| s.to_string()).collect(),
@@ -666,10 +701,22 @@ mod tests {
 
     fn corpus() -> Vec<CaseSummary> {
         vec![
-            case("TC-0001", "auth", &["p1", "smoke"], Priority::Critical, CaseType::Smoke),
-            case("TC-0007", "checkout", &["cart", "p1"], Priority::High, CaseType::Functional),
-            case("TC-0010", "checkout", &["cart"], Priority::Medium, CaseType::E2e),
-            case("TC-0021", "search", &["p1"], Priority::High, CaseType::Functional),
+            case(
+                "TC-0001",
+                "auth",
+                &["p1", "smoke"],
+                Priority::Critical,
+                &[CaseType::Smoke, CaseType::Regression],
+            ),
+            case(
+                "TC-0007",
+                "checkout",
+                &["cart", "p1"],
+                Priority::High,
+                &[CaseType::Functional, CaseType::Regression],
+            ),
+            case("TC-0010", "checkout", &["cart"], Priority::Medium, &[CaseType::E2e]),
+            case("TC-0021", "search", &["p1"], Priority::High, &[CaseType::Functional]),
         ]
     }
 
@@ -716,14 +763,61 @@ mod tests {
     }
 
     #[test]
+    fn a_case_matches_any_of_its_types() {
+        let c = corpus();
+        // TC-0007 is functional *and* regression, so either term finds it. This
+        // is the point of the plural field: a regression run picks it up without
+        // it having to stop being a functional test.
+        assert_eq!(ids(&c, "type:regression"), ["TC-0001", "TC-0007"]);
+        assert_eq!(ids(&c, "type:functional AND type:regression"), ["TC-0007"]);
+        assert!(ids(&c, "type:perf").is_empty());
+    }
+
+    #[test]
+    fn a_typed_term_takes_several_values() {
+        let c = corpus();
+        // The comma is an OR that stays inside the term, so it survives being
+        // ANDed with the rest of the group: the flat grammar has no other way to
+        // say "either of these, and also that".
+        assert_eq!(ids(&c, "type:e2e,smoke"), ["TC-0001", "TC-0010"]);
+        assert_eq!(ids(&c, "type:e2e,smoke AND suite:checkout"), ["TC-0010"]);
+        assert_eq!(ids(&c, "priority:critical,medium"), ["TC-0001", "TC-0010"]);
+        // A trailing or empty value is ignored, not read as "match anything".
+        assert_eq!(ids(&c, "type:e2e,"), ["TC-0010"]);
+        assert!(ids(&c, "type:,").is_empty());
+        // A tag that holds a comma still matches itself rather than splitting
+        // into two tags that do not exist.
+        let odd = vec![case(
+            "TC-0200",
+            "checkout",
+            &["a,b"],
+            Priority::Low,
+            &[CaseType::Functional],
+        )];
+        assert_eq!(ids(&odd, "tag:a,b"), ["TC-0200"]);
+    }
+
+    #[test]
+    fn a_reference_is_never_split_on_its_commas() {
+        // `ref:` matches by substring, so splitting the value would let the
+        // fragment `b` match every case whose references hold a `b`.
+        let c = vec![with_refs(
+            case("TC-0300", "checkout", &[], Priority::Low, &[CaseType::Functional]),
+            &["AB-4821"],
+        )];
+        assert!(ids(&c, "ref:https://jira.test/browse/CD-1?x=a,b").is_empty());
+        assert_eq!(ids(&c, "ref:4821"), ["TC-0300"]);
+    }
+
+    #[test]
     fn references_match_with_or_without_the_prefix() {
         let c = vec![
             with_refs(
-                case("TC-0007", "checkout", &[], Priority::High, CaseType::Functional),
+                case("TC-0007", "checkout", &[], Priority::High, &[CaseType::Functional]),
                 &["AB-4821", "https://example.test/docs/checkout"],
             ),
             with_refs(
-                case("TC-0010", "checkout", &[], Priority::Medium, CaseType::E2e),
+                case("TC-0010", "checkout", &[], Priority::Medium, &[CaseType::E2e]),
                 &["AB-91"],
             ),
         ];
@@ -754,10 +848,10 @@ mod tests {
         let url = "https://example.test/specs/checkout-totals";
         let c = vec![
             with_refs(
-                case("TC-0007", "checkout", &[], Priority::High, CaseType::Functional),
+                case("TC-0007", "checkout", &[], Priority::High, &[CaseType::Functional]),
                 &[url],
             ),
-            case("TC-0010", "checkout", &[], Priority::Medium, CaseType::E2e),
+            case("TC-0010", "checkout", &[], Priority::Medium, &[CaseType::E2e]),
         ];
         // A pasted reference URL splits on its own colon; it must still search.
         assert_eq!(ids(&c, url), vec!["TC-0007".to_string()]);
@@ -768,7 +862,8 @@ mod tests {
 
     #[test]
     fn free_text_is_unicode_aware() {
-        let mut c = case("TC-0100", "checkout", &["Straße"], Priority::High, CaseType::Functional);
+        let mut c =
+            case("TC-0100", "checkout", &["Straße"], Priority::High, &[CaseType::Functional]);
         c.title = "Überprüfung des Warenkorbs".into();
         let corpus = vec![c];
         assert_eq!(ids(&corpus, "über"), vec!["TC-0100".to_string()]);

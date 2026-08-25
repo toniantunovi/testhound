@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 use testhound_lib::app::sample;
-use testhound_lib::domain::{AutomationState, CaseStatus, Priority, Section};
+use testhound_lib::domain::{AutomationState, CaseStatus, CaseType, Priority, Section};
 use testhound_lib::git;
 use testhound_lib::repo::{self, CaseFields, Paths};
 
@@ -395,8 +395,8 @@ fn bulk_field_edits_touch_only_the_fields_they_set() {
 
     let fields = CaseFields {
         priority: Some(Priority::Low),
-        kind: None,
         status: Some(CaseStatus::Deprecated),
+        ..CaseFields::default()
     };
     let ids = vec!["TC-0001".to_string(), "TC-0002".to_string()];
     let changed = repo::set_case_fields(&paths, &ids, &fields).unwrap();
@@ -411,8 +411,63 @@ fn bulk_field_edits_touch_only_the_fields_they_set() {
     // The type was not part of the change, so it is whatever it was.
     let text = std::fs::read_to_string(&first).unwrap();
     assert!(text.contains("component: login # hand-added"));
-    assert!(text.contains("type: "), "the untouched keys are still there");
+    assert!(text.contains("type:"), "the untouched keys are still there");
 
+    // `type` is edited by difference: adding a kind keeps the ones each case
+    // already has, whatever they are, and the same add twice is a no-op.
+    let add_regression = CaseFields {
+        type_add: vec![CaseType::Regression],
+        ..CaseFields::default()
+    };
+    let changed = repo::set_case_fields(&paths, &ids, &add_regression).unwrap();
+    // TC-0001 is seeded as smoke + regression already, so only TC-0002 moves.
+    assert_eq!(changed, vec!["TC-0002".to_string()]);
+    let after = repo::list_cases(&paths).unwrap();
+    let kinds_of = |all: &[repo::CaseSummary], id: &str| {
+        all.iter().find(|c| c.id == id).unwrap().kinds.clone()
+    };
+    assert_eq!(
+        kinds_of(&after, "TC-0002"),
+        vec![CaseType::Negative, CaseType::Regression]
+    );
+    assert_eq!(
+        kinds_of(&after, "TC-0001"),
+        vec![CaseType::Smoke, CaseType::Regression]
+    );
+    assert!(repo::set_case_fields(&paths, &ids, &add_regression)
+        .unwrap()
+        .is_empty());
+
+    // Removing it again returns both to a single bare word.
+    let drop_regression = CaseFields {
+        type_remove: vec![CaseType::Regression],
+        ..CaseFields::default()
+    };
+    let changed = repo::set_case_fields(&paths, &ids, &drop_regression).unwrap();
+    assert_eq!(changed, ids);
+    let after = repo::list_cases(&paths).unwrap();
+    assert_eq!(kinds_of(&after, "TC-0001"), vec![CaseType::Smoke]);
+    assert_eq!(kinds_of(&after, "TC-0002"), vec![CaseType::Negative]);
+    assert!(std::fs::read_to_string(&first)
+        .unwrap()
+        .contains("type: smoke"));
+
+    // A case may not lose its last type: the batch stops instead of writing a
+    // case with none.
+    assert!(repo::set_case_fields(
+        &paths,
+        &ids,
+        &CaseFields {
+            type_remove: vec![CaseType::Smoke],
+            ..CaseFields::default()
+        }
+    )
+    .is_err());
+    assert!(std::fs::read_to_string(&first)
+        .unwrap()
+        .contains("type: smoke"));
+
+    let text = std::fs::read_to_string(&first).unwrap();
     // Applying the same values again changes nothing at all: no ids reported,
     // and the files are byte-for-byte what they were.
     assert!(repo::set_case_fields(&paths, &ids, &fields)

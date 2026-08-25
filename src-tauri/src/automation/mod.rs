@@ -691,7 +691,7 @@ mod tests {
                 section: None,
                 order: None,
                 priority: Priority::High,
-                kind: CaseType::Functional,
+                kinds: vec![CaseType::Functional],
                 status: CaseStatus::Active,
                 owner: None,
                 tags: vec![],

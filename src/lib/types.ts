@@ -2,6 +2,8 @@
 // src-tauri/src/{domain,repo,git,app}.
 
 export type Priority = "low" | "medium" | "high" | "critical";
+/** One kind of test. A case carries one or more: most say what the test does,
+ *  while `regression` says when it gets run, so a case is commonly both. */
 export type CaseType =
   | "functional"
   | "regression"
@@ -65,7 +67,9 @@ export interface CaseSummary {
   /** Manual position within the suite/folder; null when never reordered. */
   order: number | null;
   priority: Priority;
-  type: CaseType;
+  /** The kinds this case belongs to, never empty; the first is the one a
+   *  one-line row leads with. */
+  type: CaseType[];
   status: CaseStatus;
   owner: string | null;
   tags: string[];
@@ -99,7 +103,9 @@ export interface TestCase {
   section?: string | null;
   order?: number | null;
   priority: Priority;
-  type: CaseType;
+  /** Never empty. Written to disk as a bare word while there is one kind, as a
+   *  list once there are several. */
+  type: CaseType[];
   status: CaseStatus;
   owner?: string | null;
   tags: string[];
