@@ -25,6 +25,7 @@ import type {
   TestCase,
 } from "@/lib/types";
 import { useSession } from "@/store/session";
+import { useRunView } from "@/store/runView";
 import { useAssistant } from "@/store/assistant";
 import { useStep } from "@/store/step";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
@@ -48,7 +49,7 @@ const STATUSES: CaseStatus[] = ["draft", "active", "deprecated"];
 
 export function CaseEditor() {
   const id = useSession((s) => s.openCaseId);
-  const navigate = useSession((s) => s.navigate);
+  const closeCase = useSession((s) => s.closeCase);
   const openCaseHistory = useSession((s) => s.openCaseHistory);
   const openAutomation = useSession((s) => s.openAutomation);
   const startGeneration = useAssistant((s) => s.startGeneration);
@@ -92,6 +93,9 @@ export function CaseEditor() {
       setDirty(false);
       qc.invalidateQueries({ queryKey: ["cases"] });
       qc.invalidateQueries({ queryKey: ["case", saved.id] });
+      // Runs show the case's title and automation state, so the run the editor
+      // was opened from is up to date the moment it comes back into view.
+      qc.invalidateQueries({ queryKey: ["run"] });
       qc.invalidateQueries({ queryKey: ["git-status"] });
     },
   });
@@ -140,11 +144,15 @@ export function CaseEditor() {
 
   const remove = useMutation({
     mutationFn: (caseId: string) => api.deleteCase(caseId),
-    onSuccess: () => {
-      ["cases", "suites", "coverage", "dashboard", "git-status"].forEach((k) =>
-        qc.invalidateQueries({ queryKey: [k] }),
-      );
-      navigate("cases");
+    onSuccess: (_data, caseId) => {
+      // Returning to a run must not reopen its slide-over on a case that is
+      // no longer there.
+      if (useRunView.getState().panelCaseId === caseId) {
+        useRunView.getState().setPanelCase(null);
+      }
+      ["cases", "suites", "coverage", "dashboard", "run", "runs", "git-status"]
+        .forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      closeCase();
     },
   });
 
@@ -175,7 +183,8 @@ export function CaseEditor() {
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-border-subtle px-6 py-3">
         <button
-          onClick={() => navigate("cases")}
+          onClick={closeCase}
+          title="Back"
           className="shrink-0 text-text-muted hover:text-text-primary"
         >
           <ArrowLeft size={16} />

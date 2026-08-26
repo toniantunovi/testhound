@@ -20,6 +20,7 @@ import type {
   RunState,
 } from "@/lib/types";
 import { useSession } from "@/store/session";
+import { useRunView } from "@/store/runView";
 import { useActivity } from "@/store/activity";
 import { usePlaywrightSetup } from "@/store/playwrightSetup";
 import { TriageModal } from "@/screens/TriageModal";
@@ -96,18 +97,16 @@ export function RunView() {
     null,
   );
   const [headed, setHeaded] = useState(false);
-  /** Case open in the read-and-record slide-over, if any. */
-  const [panelCaseId, setPanelCaseId] = useState<string | null>(null);
-  /** Statuses the case list is narrowed to; empty means show everything. */
-  const [statuses, setStatuses] = useState<Set<ResultStatus>>(new Set());
-  /** The search box over the run's cases, the same one the case list has. */
-  const [query, setQuery] = useState("");
-
-  // A filter belongs to the run it was set in, not to the screen.
-  useEffect(() => {
-    setStatuses(new Set());
-    setQuery("");
-  }, [id]);
+  // Filter, search and the open slide-over live in a store, not in this
+  // component: opening a case in the editor and coming back finds the run
+  // exactly as it was left. Opening a different run clears them.
+  const panelCaseId = useRunView((s) => s.panelCaseId);
+  const setPanelCaseId = useRunView((s) => s.setPanelCase);
+  const statuses = useRunView((s) => s.statuses);
+  const toggleStatus = useRunView((s) => s.toggleStatus);
+  const clearStatuses = useRunView((s) => s.clearStatuses);
+  const query = useRunView((s) => s.query);
+  const setQuery = useRunView((s) => s.setQuery);
 
   const { data } = useQuery({
     queryKey: ["run", id],
@@ -187,12 +186,6 @@ export function RunView() {
     ? navRows.findIndex((r) => r.case === panelCaseId)
     : -1;
   const panelRow = panelIdx >= 0 ? navRows[panelIdx] : null;
-  const toggleStatus = (status: ResultStatus) =>
-    setStatuses((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(status)) next.add(status);
-      return next;
-    });
 
   return (
     <div className="flex h-full flex-col">
@@ -311,7 +304,7 @@ export function RunView() {
       {/* Status filter */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border-subtle px-6 py-2">
         <button
-          onClick={() => setStatuses(new Set())}
+          onClick={clearStatuses}
           className={cn(
             "flex h-7 items-center gap-1.5 rounded-control border px-2.5 text-xs font-medium transition-colors",
             statuses.size === 0
